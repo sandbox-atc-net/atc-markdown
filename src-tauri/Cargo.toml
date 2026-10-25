@@ -1,0 +1,31 @@
+[package]
+name = "atc-markdown"
+description = "Atc.Markdown – a fast, cross-platform Markdown viewer."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lib]
+name = "atc_markdown_lib"
+
+[build-dependencies]
+tauri-build.workspace = true
+
+[dependencies]
+atc-markdown-core.workspace = true
+notify-debouncer-mini.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tauri.workspace = true
+tauri-plugin-dialog.workspace = true
+tauri-plugin-opener.workspace = true
+tauri-plugin-single-instance.workspace = true
+tauri-plugin-window-state.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[lints]
+workspace = true
