@@ -1,20 +1,28 @@
 // The open tabs, saved so they can be reopened on the next start.
 
-import type { TabState } from "./tabs";
+import { activateTab, emptyTabs, openTab, type OpenDocument, type TabState } from "./tabs";
+
+export type SessionTab = { kind: "document"; path: string } | { kind: "wiki"; root: string; page: string };
 
 export interface Session {
-  paths: string[];
+  tabs: SessionTab[];
+  /** Identity (`path`) of the active tab. */
   active: string | null;
 }
 
 export function toSession(state: TabState): Session {
   return {
-    paths: state.tabs.map((tab) => tab.path),
+    tabs: state.tabs.map((tab) =>
+      tab.wiki ? { kind: "wiki", root: tab.path, page: tab.wiki.page.path } : { kind: "document", path: tab.path },
+    ),
     active: state.tabs[state.activeIndex]?.path ?? null,
   };
 }
 
-/** Parses a saved session, or returns `undefined` if it is missing or malformed. */
+/**
+ * Parses a saved session, or returns `undefined` if it is missing or malformed.
+ * Also reads the first format (`{ paths, active }`) written by earlier versions.
+ */
 export function parseSession(raw: string | null): Session | undefined {
   if (raw === null) return undefined;
   let value: unknown;
@@ -24,8 +32,42 @@ export function parseSession(raw: string | null): Session | undefined {
     return undefined;
   }
   if (typeof value !== "object" || value === null) return undefined;
-  const { paths, active } = value as Record<string, unknown>;
-  if (!Array.isArray(paths) || !paths.every((p) => typeof p === "string")) return undefined;
+  const { tabs, paths, active } = value as Record<string, unknown>;
   if (active !== null && typeof active !== "string") return undefined;
-  return { paths: paths as string[], active };
+
+  if (Array.isArray(tabs)) {
+    return tabs.every(isSessionTab) ? { tabs, active } : undefined;
+  }
+  if (Array.isArray(paths) && paths.every((p) => typeof p === "string")) {
+    return { tabs: (paths as string[]).map((path) => ({ kind: "document", path })), active };
+  }
+  return undefined;
+}
+
+function isSessionTab(value: unknown): value is SessionTab {
+  if (typeof value !== "object" || value === null) return false;
+  const tab = value as Record<string, unknown>;
+  if (tab.kind === "document") return typeof tab.path === "string";
+  if (tab.kind === "wiki") return typeof tab.root === "string" && typeof tab.page === "string";
+  return false;
+}
+
+/**
+ * The tab state at startup: the restored tabs (in order, failed ones skipped)
+ * with the saved active tab, then the files the app was started with — the
+ * last of those ends up active.
+ */
+export function startupState(
+  restored: readonly (OpenDocument | undefined)[],
+  active: string | null,
+  opened: readonly OpenDocument[],
+): TabState {
+  let state = emptyTabs;
+  for (const doc of restored) {
+    if (doc) state = openTab(state, doc);
+  }
+  const index = state.tabs.findIndex((tab) => tab.path === active);
+  if (index >= 0) state = activateTab(state, index);
+  for (const doc of opened) state = openTab(state, doc);
+  return state;
 }

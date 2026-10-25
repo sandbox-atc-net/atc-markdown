@@ -1,9 +1,19 @@
 // Pure tab state. No DOM or Tauri here, so it is easy to unit test.
 
+import type { WikiView } from "./wiki";
+
+/**
+ * An open tab. For a wiki tab, `path` is the wiki folder (the tab's identity),
+ * `title` the wiki name and `html` the current page; `wiki` holds the rest.
+ */
 export interface OpenDocument {
   path: string;
   title: string;
   html: string;
+  /** Set on wiki tabs. */
+  wiki?: WikiView;
+  /** Set on document tabs whose file is a page of a wiki. */
+  wikiRoot?: string;
 }
 
 export interface TabState {

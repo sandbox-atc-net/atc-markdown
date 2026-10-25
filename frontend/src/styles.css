@@ -83,6 +83,7 @@ body.dragging .content {
   color: var(--fg);
   box-shadow: inset 0 2px 0 var(--accent);
 }
+.tab.wiki .tab-label::before { content: "📚 "; }
 .tab-label {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -115,12 +116,176 @@ body.dragging .content {
   position: relative;
   flex: 1;
   min-height: 0;
+  display: flex;
+  --sidebar-width: 280px;
 }
 
 .content {
+  flex: 1;
+  min-width: 0;
   height: 100%;
   overflow: auto;
 }
+
+/* Wiki: sidebar | splitter | page */
+.wiki-sidebar {
+  width: var(--sidebar-width);
+  flex-shrink: 0;
+  overflow: auto;
+  background: var(--subtle-bg);
+  border-right: 1px solid var(--border);
+}
+.wiki-splitter {
+  width: 5px;
+  margin-left: -3px;
+  flex-shrink: 0;
+  cursor: col-resize;
+  z-index: 1;
+}
+.wiki-splitter:hover, .wiki-splitter.dragging { background: var(--accent); opacity: 0.5; }
+body.sidebar-hidden .wiki-sidebar, body.sidebar-hidden .wiki-splitter { display: none; }
+
+.markdown-body.wiki-sidebar-body {
+  max-width: none;
+  padding: 16px 16px 8px;
+  font-size: calc(14px * var(--zoom));
+  line-height: 1.5;
+}
+.wiki-sidebar-body h1, .wiki-sidebar-body h2, .wiki-sidebar-body h3 {
+  margin: 16px 0 6px;
+  padding-bottom: 0;
+  border-bottom: 0;
+  font-size: 1em;
+}
+.wiki-sidebar-body h1:first-child, .wiki-sidebar-body h2:first-child { margin-top: 0; }
+.wiki-sidebar-body ul { padding-left: 0.4em; list-style: none; margin: 0; }
+.wiki-sidebar-body li { margin: 2px 0; }
+/* Inline (not inline-block) so a long title wraps next to its emoji instead of below it. */
+.wiki-sidebar-body a {
+  padding: 1px 4px;
+  margin: 0 -4px;
+  border-radius: 4px;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+.wiki-sidebar-body a.current-page {
+  background: var(--accent);
+  color: #fff;
+  text-decoration: none;
+}
+
+.wiki-pages { padding: 4px 16px 16px; font-size: 13px; }
+.wiki-pages summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-weight: 600;
+  padding: 6px 0;
+  user-select: none;
+}
+.wiki-pages-filter {
+  width: 100%;
+  margin: 4px 0 8px;
+  font: inherit;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 8px;
+  outline: none;
+}
+.wiki-pages-filter:focus { border-color: var(--accent); }
+.wiki-pages-list { list-style: none; margin: 0; padding: 0; }
+.wiki-pages-list button {
+  display: block;
+  width: 100%;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wiki-pages-list button:hover { background: var(--border); }
+.wiki-pages-list button.current-page { background: var(--accent); color: #fff; }
+.wiki-pages-empty { color: var(--muted); padding: 3px 6px; }
+
+.wiki-header {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 20px 40px 0;
+}
+.wiki-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.wiki-nav button {
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--subtle-bg);
+  color: var(--fg);
+  font-size: 14px;
+  cursor: pointer;
+}
+.wiki-nav button:disabled { opacity: 0.4; cursor: default; }
+.wiki-nav button:not(:disabled):hover { border-color: var(--accent); }
+.wiki-crumbs { margin-left: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wiki-crumbs b { color: var(--fg); font-weight: 600; }
+.wiki-nav .wiki-github {
+  margin-left: auto;
+  color: var(--accent);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.wiki-nav .wiki-github:hover { text-decoration: underline; }
+.wiki-title {
+  margin: 18px 0 2px;
+  font-size: calc(32px * var(--zoom));
+  font-weight: 400;
+  line-height: 1.25;
+}
+.wiki-meta { margin: 0; color: var(--muted); font-size: 13px; }
+.wiki-header:not([hidden]) ~ .markdown-body { padding-top: 16px; }
+
+.markdown-body.wiki-footer {
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: calc(14px * var(--zoom));
+}
+
+.markdown-body a.missing-page { color: var(--danger); }
+
+/* Info bar ("this file is part of a wiki") */
+.info-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  background: var(--subtle-bg);
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  color: var(--muted);
+}
+.info-bar button {
+  font: inherit;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  cursor: pointer;
+}
+.info-bar button:hover { border-color: var(--accent); }
 
 /* Link status bubble (shows where a link goes) */
 .link-status {
@@ -146,6 +311,8 @@ body.dragging .content {
 }
 .link-status.visible { opacity: 1; transition-duration: 80ms; }
 .link-status.right { left: auto; right: 8px; }
+.viewport.has-sidebar .link-status:not(.right) { left: calc(var(--sidebar-width) + 8px); }
+body.sidebar-hidden .viewport.has-sidebar .link-status:not(.right) { left: 8px; }
 .link-status-icon { display: inline-flex; color: var(--muted); }
 .link-status-icon svg { width: 14px; height: 14px; }
 .link-status-action { color: var(--muted); white-space: nowrap; }
@@ -263,6 +430,7 @@ body.dragging .content {
 .empty-title { font-size: 20px; margin: 0 0 8px; color: var(--fg); }
 .empty-hint { margin: 0 0 20px; }
 .empty-shortcut { margin: 8px 0 0; font-size: 12px; }
+.empty-actions { display: flex; gap: 8px; }
 
 .open-button {
   font: inherit;

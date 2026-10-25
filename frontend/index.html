@@ -9,15 +9,38 @@
   </head>
   <body>
     <nav id="tabs" class="tabs" role="tablist" aria-label="Open documents"></nav>
-    <div class="viewport">
+    <div id="viewport" class="viewport">
+      <aside id="wiki-sidebar" class="wiki-sidebar" aria-label="Wiki sidebar" hidden>
+        <div id="wiki-sidebar-body" class="markdown-body wiki-sidebar-body"></div>
+        <details id="wiki-pages" class="wiki-pages">
+          <summary id="wiki-pages-summary">Pages</summary>
+          <input
+            id="wiki-pages-filter"
+            class="wiki-pages-filter"
+            type="text"
+            placeholder="Find a page…"
+            aria-label="Find a page"
+            spellcheck="false"
+            autocomplete="off"
+          />
+          <ul id="wiki-pages-list" class="wiki-pages-list"></ul>
+        </details>
+      </aside>
+      <div id="wiki-splitter" class="wiki-splitter" role="separator" aria-orientation="vertical" aria-label="Resize sidebar" hidden></div>
       <main id="content" class="content">
+        <div id="wiki-banner" class="info-bar" hidden></div>
+        <header id="wiki-header" class="wiki-header" hidden></header>
         <div id="empty" class="empty">
           <p class="empty-title">Drop Markdown files here</p>
           <p class="empty-hint">or open a <code>.md</code> file with Atc.Markdown</p>
-          <button id="open-button" class="open-button" type="button">Open file…</button>
-          <p class="empty-shortcut">Ctrl+O</p>
+          <div class="empty-actions">
+            <button id="open-button" class="open-button" type="button">Open file…</button>
+            <button id="open-wiki-button" class="open-button" type="button">Open wiki folder…</button>
+          </div>
+          <p class="empty-shortcut">Ctrl+O · Ctrl+Shift+O</p>
         </div>
         <article id="preview" class="markdown-body" hidden></article>
+        <footer id="wiki-footer" class="markdown-body wiki-footer" hidden></footer>
       </main>
       <div id="link-status" class="link-status" aria-live="polite" aria-hidden="true"></div>
       <div id="link-menu" class="context-menu" role="menu" aria-label="Link" hidden></div>

@@ -41,6 +41,15 @@ describe("describeLink", () => {
     );
   });
 
+  it("describes wiki pages by title", () => {
+    const wiki = { ...ctx, wikiRoot: "C:\\w" };
+    const page = { kind: "document", path: "C:\\w\\Working-with-Enums.md", fragment: "values", exists: true } as const;
+    expect(describeLink(page, wiki)).toMatchObject({ action: "Go to wiki page", target: { before: "Working with Enums#values" } });
+    expect(describeLink({ ...page, exists: false }, wiki).problem).toBe("page not found");
+    // Outside the wiki it is an ordinary document.
+    expect(describeLink({ ...page, path: "C:\\other\\a.md" }, wiki).action).toBe("Open in new tab");
+  });
+
   it("names the file manager per platform", () => {
     const target = { kind: "localFile", path: "C:\\docs\\a.pdf", exists: true } as const;
     expect(describeLink(target, ctx).action).toBe("Show in Explorer");

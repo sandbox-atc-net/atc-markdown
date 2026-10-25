@@ -1,5 +1,7 @@
 // What the link status bubble says. Pure functions, so they can be unit tested.
 
+import { isInside, titleFromPath } from "./wiki";
+
 /** Mirrors `LinkTarget` in `atc-markdown-core`. */
 export type LinkTarget =
   | { kind: "anchor"; id: string }
@@ -39,6 +41,8 @@ export interface LinkContext {
   isOpen(path: string): boolean;
   headingText(id: string): string | undefined;
   isMac: boolean;
+  /** Set when the link is in a wiki page: links to its pages navigate inside the wiki. */
+  wikiRoot?: string;
 }
 
 const MAX_TARGET_LENGTH = 90;
@@ -62,6 +66,14 @@ export function describeLink(preview: LinkPreview, ctx: LinkContext): BubbleCont
     }
     case "document": {
       const fragment = preview.fragment ? `#${preview.fragment}` : "";
+      if (ctx.wikiRoot && isInside(ctx.wikiRoot, preview.path)) {
+        return {
+          icon: "file",
+          action: "Go to wiki page",
+          target: plain(middleEllipsis(titleFromPath(preview.path) + fragment, MAX_TARGET_LENGTH)),
+          problem: preview.exists ? undefined : "page not found",
+        };
+      }
       const action = ctx.isOpen(preview.path) ? "Switch to tab" : "Open in new tab";
       return {
         icon: "file",
