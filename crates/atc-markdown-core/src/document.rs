@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
-use crate::render::{SanitizedHtml, render_document};
+use crate::render::{RenderOptions, SanitizedHtml, render_document_with};
 
 /// Largest file we will open (20 MiB). Guards against accidentally opening huge files.
 pub const MAX_DOCUMENT_BYTES: u64 = 20 * 1024 * 1024;
@@ -58,9 +58,18 @@ pub enum DocumentError {
 /// Returns a [`DocumentError`] if the file is missing, not a regular file,
 /// larger than [`MAX_DOCUMENT_BYTES`], or not valid UTF-8.
 pub fn load_document(path: &Path) -> Result<Document, DocumentError> {
+    load_document_with(path, &RenderOptions::default())
+}
+
+/// [`load_document`] with the user's rendering choices.
+///
+/// # Errors
+///
+/// As [`load_document`].
+pub fn load_document_with(path: &Path, options: &RenderOptions) -> Result<Document, DocumentError> {
     let source = read_markdown(path)?;
     let base_dir = source.path.parent().unwrap_or(Path::new(""));
-    let rendered = render_document(&source.text, base_dir);
+    let rendered = render_document_with(&source.text, base_dir, options);
 
     Ok(Document {
         title: file_title(&source.path),

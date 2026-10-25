@@ -1,0 +1,40 @@
+---
+source: crates/atc-markdown-core/tests/render_snapshots.rs
+expression: render_markdown(&source).as_str()
+input_file: crates/atc-markdown-core/tests/fixtures/github.md
+---
+<table class="front-matter"><thead><tr><th>title</th><th>version</th><th>tags</th></tr></thead><tbody><tr><td>Release &lt;notes&gt;</td><td>3.1</td><td>[api, generator]</td></tr></tbody></table>
+<h1 id="github-extras">GitHub extras<a href="#github-extras" aria-label="Link to heading 'GitHub extras'" class="anchor" rel="noopener noreferrer"></a></h1>
+<div class="markdown-alert markdown-alert-note">
+<p class="markdown-alert-title">Note</p>
+<p>Useful information.</p>
+</div>
+<div class="markdown-alert markdown-alert-tip">
+<p class="markdown-alert-title">Tip</p>
+<p>Helpful advice.</p>
+</div>
+<div class="markdown-alert markdown-alert-important">
+<p class="markdown-alert-title">Important</p>
+<p>Key information.</p>
+</div>
+<div class="markdown-alert markdown-alert-warning">
+<p class="markdown-alert-title">Warning</p>
+<p>Urgent info.</p>
+</div>
+<div class="markdown-alert markdown-alert-caution">
+<p class="markdown-alert-title">Caution</p>
+<p>Risky action.</p>
+</div>
+<p>Done ✅ · Bug 🐛 · Unknown :not_a_shortcode:</p>
+<p>Inline math <span data-math-style="inline">e^{i\pi} + 1 = 0</span> and prices $5 and $10 stay text.</p>
+<p><span data-math-style="display">
+\sum_{n=1}^{\infty} \frac{1}{n^2} = \frac{\pi^2}{6}
+</span></p>
+<pre class="syntax-highlighting"><code class="language-mermaid"><span class="hl-text hl-plain">graph TD
+  A[Start] --&gt; B{Decide}
+  B --&gt;|Yes| C[Done]
+</span></code></pre>
+<details open="">
+<summary>Details</summary>
+<p>Hidden by default on GitHub, open here.</p>
+</details>

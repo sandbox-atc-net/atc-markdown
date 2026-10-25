@@ -14,7 +14,7 @@ repository = "https://github.com/atc-net/atc-markdown"
 atc-markdown-core = { path = "crates/atc-markdown-core" }
 
 ammonia = "4.2"
-comrak = { version = "0.57", default-features = false, features = ["syntect-onig"] }
+comrak = { version = "0.57", default-features = false, features = ["syntect-onig", "shortcodes"] }
 syntect = { version = "5.3", default-features = false, features = ["default-syntaxes", "default-themes", "html", "regex-onig"] }
 two-face = { version = "0.5", default-features = false, features = ["syntect-onig"] }
 serde = { version = "1", features = ["derive"] }

@@ -5,8 +5,9 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex, PoisonError};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
+use crate::front_matter;
 use crate::highlight::Highlighter;
 use crate::paths::{asset_url, resolve_relative};
 
@@ -52,12 +53,47 @@ pub(crate) trait LinkRewriter: Send + Sync {
     fn rewrite(&self, href: &str) -> LinkRewrite;
 }
 
+/// How YAML front matter is shown.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FrontMatterStyle {
+    /// A one-row table of `key: value` pairs, like github.com (YAML block when nested).
+    #[default]
+    Table,
+    /// Not shown.
+    Hidden,
+    /// The YAML as a code block.
+    Raw,
+}
+
+/// User choices that change the rendered HTML.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct RenderOptions {
+    /// How front matter is shown.
+    pub front_matter: FrontMatterStyle,
+    /// Turn `:shortcodes:` into emoji.
+    pub emoji: bool,
+    /// Mark `$…$` and `$$…$$` as math (rendered by `KaTeX` in the frontend).
+    pub math: bool,
+}
+
+impl Default for RenderOptions {
+    fn default() -> Self {
+        Self {
+            front_matter: FrontMatterStyle::Table,
+            emoji: true,
+            math: true,
+        }
+    }
+}
+
 /// Renders GitHub Flavored Markdown to sanitized HTML, without resolving local images.
 ///
 /// Raw HTML in the source is allowed through the parser and then cleaned by an
 /// allow-list sanitizer: scripts, event handlers and `javascript:` URLs are removed.
 pub fn render_markdown(source: &str) -> SanitizedHtml {
-    render_with(source, None, None).html
+    render_with(source, None, None, &RenderOptions::default()).html
 }
 
 /// Renders a document located in `base_dir`.
@@ -66,7 +102,12 @@ pub fn render_markdown(source: &str) -> SanitizedHtml {
 /// rewritten to asset-protocol URLs the webview can load. Links are left as written;
 /// see [`crate::resolve_link`] for what happens when one is clicked.
 pub fn render_document(source: &str, base_dir: &Path) -> Rendered {
-    render_with(source, Some(base_dir), None)
+    render_document_with(source, base_dir, &RenderOptions::default())
+}
+
+/// [`render_document`] with the user's rendering choices.
+pub fn render_document_with(source: &str, base_dir: &Path, options: &RenderOptions) -> Rendered {
+    render_with(source, Some(base_dir), None, options)
 }
 
 /// Renders a wiki page: `[[Page]]` links are enabled and every link goes through `links`.
@@ -74,23 +115,27 @@ pub(crate) fn render_wiki_page(
     source: &str,
     base_dir: &Path,
     links: Arc<dyn LinkRewriter>,
+    options: &RenderOptions,
 ) -> Rendered {
-    render_with(source, Some(base_dir), Some(links))
+    render_with(source, Some(base_dir), Some(links), options)
 }
 
 fn render_with(
     source: &str,
     base_dir: Option<&Path>,
     links: Option<Arc<dyn LinkRewriter>>,
+    render_options: &RenderOptions,
 ) -> Rendered {
     let mut plugins = comrak::options::Plugins::default();
     plugins.render.codefence_syntax_highlighter = Some(&Highlighter);
-    let options = if links.is_some() {
-        &*WIKI_COMRAK_OPTIONS
+    let mut options = if links.is_some() {
+        WIKI_COMRAK_OPTIONS.clone()
     } else {
-        &*COMRAK_OPTIONS
+        COMRAK_OPTIONS.clone()
     };
-    let html = comrak::markdown_to_html_with_plugins(source, options, &plugins);
+    options.extension.shortcodes = render_options.emoji;
+    options.extension.math_dollars = render_options.math;
+    let html = markdown_to_html(source, &options, &plugins, render_options.front_matter);
 
     if base_dir.is_none() && links.is_none() {
         return Rendered {
@@ -112,6 +157,48 @@ fn render_with(
     }
 }
 
+/// Markdown → unsanitized HTML, with front matter shown like GitHub (comrak drops it).
+fn markdown_to_html(
+    source: &str,
+    options: &comrak::Options,
+    plugins: &comrak::options::Plugins,
+    style: FrontMatterStyle,
+) -> String {
+    let arena = comrak::Arena::new();
+    let root = comrak::parse_document(&arena, source, options);
+
+    let mut html = String::new();
+    let front_matter = root
+        .children()
+        .find_map(|node| match &node.data.borrow().value {
+            comrak::nodes::NodeValue::FrontMatter(raw) => Some((node, raw.clone())),
+            _ => None,
+        });
+    if let Some((node, raw)) = front_matter {
+        node.detach();
+        let yaml = front_matter::body(&raw);
+        let pairs = match style {
+            FrontMatterStyle::Table => front_matter::flat_pairs(&yaml),
+            FrontMatterStyle::Hidden | FrontMatterStyle::Raw => None,
+        };
+        match pairs {
+            Some(pairs) => html.push_str(&front_matter::table_html(&pairs)),
+            // Raw, or nested YAML: show it as a highlighted code block.
+            None if style != FrontMatterStyle::Hidden && !yaml.trim().is_empty() => {
+                let fence = format!("```yaml\n{yaml}\n```\n");
+                html.push_str(&comrak::markdown_to_html_with_plugins(
+                    &fence, options, plugins,
+                ));
+            }
+            None => {}
+        }
+    }
+
+    // Writing to a String cannot fail.
+    let _ = comrak::format_html_with_plugins(root, options, &mut html, plugins);
+    html
+}
+
 /// What the sanitizer's attribute filter collected while cleaning.
 #[derive(Debug, Default)]
 struct Found {
@@ -128,6 +215,11 @@ static COMRAK_OPTIONS: LazyLock<comrak::Options<'static>> = LazyLock::new(|| {
     ext.tasklist = true;
     ext.footnotes = true;
     ext.header_id_prefix = Some(String::new());
+    // Also rendered by github.com:
+    ext.alerts = true;
+    ext.front_matter_delimiter = Some("---".to_owned());
+    ext.math_dollars = true;
+    ext.shortcodes = true;
     // Raw HTML is passed through here and cleaned by the sanitizer afterwards.
     options.render.r#unsafe = true;
     options
@@ -153,6 +245,10 @@ fn base_sanitizer() -> ammonia::Builder<'static> {
             ["aria-label", "data-footnote-ref", "data-footnote-backref"],
         )
         .add_tag_attributes("section", ["data-footnotes"])
+        // Math is rendered by KaTeX in the frontend; this marks it.
+        .add_tag_attributes("span", ["data-math-style"])
+        .add_tag_attributes("code", ["data-math-style"])
+        .add_tag_attributes("details", ["open"])
         .link_rel(Some("noopener noreferrer"));
     // Web links only; relative links stay as written. `asset` is the scheme of
     // rewritten local images on macOS/Linux.
@@ -276,9 +372,57 @@ mod tests {
     fn highlight_css_has_light_and_dark_rules() {
         let css = highlight_css();
         assert!(css.contains(".hl-"));
-        assert!(css.contains("@media (prefers-color-scheme: dark)"));
-        // The light theme must not apply in dark mode.
-        assert!(css.starts_with("@media not (prefers-color-scheme: dark)"));
+        // Light is scoped away from dark mode, paper is always light, dark only on screen.
+        assert!(css.starts_with(":root:not([data-theme=\"dark\"]) {"));
+        assert!(css.contains("@media print {\n:root {"));
+        assert!(css.contains("@media screen {\n:root[data-theme=\"dark\"] {"));
+    }
+
+    #[test]
+    fn every_code_theme_has_css_and_unknown_ids_fall_back() {
+        for theme in crate::CODE_THEMES {
+            assert!(
+                crate::highlight_css_for(theme.id).contains(".hl-"),
+                "{}",
+                theme.id
+            );
+        }
+        assert_eq!(crate::code_theme("nope").id, "github");
+    }
+
+    #[test]
+    fn render_options_change_the_output() {
+        let source = "---\ntitle: T\n---\n\n:rocket: $x$";
+        let render = |options: RenderOptions| {
+            render_document_with(source, Path::new("."), &options)
+                .html
+                .as_str()
+                .to_owned()
+        };
+        let default = render(RenderOptions::default());
+        assert!(default.starts_with("<table class=\"front-matter\">"));
+        assert!(default.contains('🚀'));
+        assert!(default.contains("data-math-style"));
+
+        let off = render(RenderOptions {
+            front_matter: FrontMatterStyle::Hidden,
+            emoji: false,
+            math: false,
+        });
+        assert!(
+            !off.contains("front-matter") && !off.contains("title"),
+            "{off}"
+        );
+        assert!(
+            off.contains(":rocket:") && !off.contains("data-math-style"),
+            "{off}"
+        );
+
+        let raw = render(RenderOptions {
+            front_matter: FrontMatterStyle::Raw,
+            ..RenderOptions::default()
+        });
+        assert!(raw.contains("language-yaml"), "{raw}");
     }
 
     #[test]

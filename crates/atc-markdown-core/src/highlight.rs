@@ -16,8 +16,6 @@ use syntect::util::LinesWithEndings;
 use two_face::theme::EmbeddedThemeName;
 
 pub(crate) const CLASS_PREFIX: &str = "hl-";
-const LIGHT_THEME: EmbeddedThemeName = EmbeddedThemeName::Github;
-const DARK_THEME: EmbeddedThemeName = EmbeddedThemeName::OneHalfDark;
 
 /// Fence names that don't match a grammar's own name or file extension.
 /// Keys are lowercase; values are syntax names in the `two-face` set.
@@ -172,31 +170,119 @@ pub fn code_language(fence: &str) -> Option<&'static str> {
         .filter(|name| *name != "Plain Text")
 }
 
-/// CSS for highlighted code blocks: a light theme, and a dark theme selected
-/// through `prefers-color-scheme`.
-pub fn highlight_css() -> &'static str {
-    &HIGHLIGHT_CSS
+/// A choice of code colours: one theme for light mode and one for dark mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeTheme {
+    /// Id stored in settings, e.g. `github`.
+    pub id: &'static str,
+    /// Name shown to the user.
+    pub label: &'static str,
+    #[serde(skip)]
+    light: EmbeddedThemeName,
+    #[serde(skip)]
+    dark: EmbeddedThemeName,
 }
 
-static HIGHLIGHT_CSS: LazyLock<String> = LazyLock::new(|| {
-    let themes = two_face::theme::extra();
+/// The code colour choices; the first one is the default.
+pub const CODE_THEMES: &[CodeTheme] = &[
+    CodeTheme {
+        id: "github",
+        label: "GitHub / One Half Dark",
+        light: EmbeddedThemeName::Github,
+        dark: EmbeddedThemeName::OneHalfDark,
+    },
+    CodeTheme {
+        id: "one-half",
+        label: "One Half",
+        light: EmbeddedThemeName::OneHalfLight,
+        dark: EmbeddedThemeName::OneHalfDark,
+    },
+    CodeTheme {
+        id: "solarized",
+        label: "Solarized",
+        light: EmbeddedThemeName::SolarizedLight,
+        dark: EmbeddedThemeName::SolarizedDark,
+    },
+    CodeTheme {
+        id: "gruvbox",
+        label: "Gruvbox",
+        light: EmbeddedThemeName::GruvboxLight,
+        dark: EmbeddedThemeName::GruvboxDark,
+    },
+    CodeTheme {
+        id: "catppuccin",
+        label: "Catppuccin (Latte / Mocha)",
+        light: EmbeddedThemeName::CatppuccinLatte,
+        dark: EmbeddedThemeName::CatppuccinMocha,
+    },
+    CodeTheme {
+        id: "monokai",
+        label: "Monokai",
+        light: EmbeddedThemeName::MonokaiExtendedLight,
+        dark: EmbeddedThemeName::MonokaiExtended,
+    },
+    CodeTheme {
+        id: "coldark",
+        label: "Coldark",
+        light: EmbeddedThemeName::ColdarkCold,
+        dark: EmbeddedThemeName::ColdarkDark,
+    },
+    CodeTheme {
+        id: "base16-ocean",
+        label: "Base16 Ocean",
+        light: EmbeddedThemeName::Base16OceanLight,
+        dark: EmbeddedThemeName::Base16OceanDark,
+    },
+    CodeTheme {
+        id: "dracula",
+        label: "Inspired GitHub / Dracula",
+        light: EmbeddedThemeName::InspiredGithub,
+        dark: EmbeddedThemeName::Dracula,
+    },
+];
+
+/// Finds a code theme by id, falling back to the default.
+pub fn code_theme(id: &str) -> CodeTheme {
+    CODE_THEMES
+        .iter()
+        .copied()
+        .find(|theme| theme.id == id)
+        .unwrap_or(CODE_THEMES[0])
+}
+
+/// CSS for highlighted code blocks in the default code theme.
+pub fn highlight_css() -> String {
+    highlight_css_for(CODE_THEMES[0].id)
+}
+
+/// CSS for highlighted code blocks in a code theme.
+///
+/// The app sets `data-theme="dark"` on `<html>` in dark mode. Each theme is
+/// scoped to its own mode (so a rule only one theme has, e.g. for string quotes,
+/// can't leak into the other mode), and paper always gets the light theme.
+pub fn highlight_css_for(id: &str) -> String {
+    let theme = code_theme(id);
+    let themes = &*THEMES;
     let css = |name| {
         syntect::html::css_for_theme_with_class_style(themes.get(name), CLASS_STYLE)
             .unwrap_or_default()
     };
-    // Each theme is scoped to its own mode, so a rule only one theme has
-    // (e.g. for string quotes) can't leak its colour into the other mode.
+    let (light, dark) = (css(theme.light), css(theme.dark));
     format!(
-        "@media not (prefers-color-scheme: dark) {{\n{}\n}}\n@media (prefers-color-scheme: dark) {{\n{}\n}}\n",
-        css(LIGHT_THEME),
-        css(DARK_THEME)
+        ":root:not([data-theme=\"dark\"]) {{\n{light}\n}}\n\
+         @media print {{\n:root {{\n{light}\n}}\n}}\n\
+         @media screen {{\n:root[data-theme=\"dark\"] {{\n{dark}\n}}\n}}\n"
     )
-});
+}
 
-/// Loads the syntax set and CSS ahead of time, so the first document opens fast.
+static THEMES: LazyLock<two_face::theme::EmbeddedLazyThemeSet> =
+    LazyLock::new(two_face::theme::extra);
+
+/// Loads the syntax set and themes ahead of time, so the first document opens fast.
 pub fn warm_up() {
     LazyLock::force(&SYNTAXES);
-    LazyLock::force(&HIGHLIGHT_CSS);
+    let _ = highlight_css();
 }
 
 #[cfg(test)]

@@ -19,7 +19,7 @@ use serde::Serialize;
 use crate::document::{DocumentError, read_markdown, strip_verbatim_prefix};
 use crate::links::{LinkTarget, is_markdown_file};
 use crate::paths::{has_scheme, percent_decode, percent_encode_component};
-use crate::render::{LinkRewrite, LinkRewriter, SanitizedHtml, render_wiki_page};
+use crate::render::{LinkRewrite, LinkRewriter, RenderOptions, SanitizedHtml, render_wiki_page};
 
 const SIDEBAR: &str = "_sidebar";
 const FOOTER: &str = "_footer";
@@ -100,6 +100,72 @@ pub struct WikiDocument {
     /// Local image files the page uses (not sent to the frontend).
     #[serde(skip)]
     pub local_images: Vec<PathBuf>,
+}
+
+/// A page that matched a full-text search.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchHit {
+    /// The page.
+    pub page: WikiPage,
+    /// How often the text occurs in the page.
+    pub matches: usize,
+    /// Text around the first match, if the text (not just the title) matched.
+    pub snippet: Option<Snippet>,
+}
+
+/// Text around a match, split so the match can be shown in bold.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Snippet {
+    /// Text before the match.
+    pub before: String,
+    /// The matched text, as written in the page.
+    pub hit: String,
+    /// Text after the match.
+    pub after: String,
+}
+
+/// Some text either side of a match (more after than before, so the match
+/// stays visible in a two-line preview), on one line, without Markdown noise.
+fn snippet(text: &str, lower: &str, at: usize, len: usize) -> Option<Snippet> {
+    // `to_lowercase` can change byte lengths; only use offsets that line up.
+    if lower.len() != text.len() || !text.is_char_boundary(at) || !text.is_char_boundary(at + len) {
+        return None;
+    }
+    let start = text[..at]
+        .char_indices()
+        .rev()
+        .nth(30)
+        .map_or(0, |(i, _)| i);
+    let end = text[at + len..]
+        .char_indices()
+        .nth(80)
+        .map_or(text.len(), |(i, _)| at + len + i);
+    let before = clean_snippet(&text[start..at]);
+    let after = clean_snippet(&text[at + len..end]);
+    Some(Snippet {
+        before: if start > 0 {
+            format!("…{}", before.trim_start())
+        } else {
+            before
+        },
+        hit: text[at..at + len].to_owned(),
+        after: if end < text.len() {
+            format!("{}…", after.trim_end())
+        } else {
+            after
+        },
+    })
+}
+
+/// Text on one line without Markdown markup: heading `#`s, emphasis, code
+/// ticks, table pipes and quote marks. A `#` inside a word (C#, F#) stays.
+fn clean_snippet(text: &str) -> String {
+    text.split_whitespace()
+        .filter(|word| !word.chars().all(|c| c == '#' || c == '>' || c == '|'))
+        .collect::<Vec<_>>()
+        .join(" ")
+        .replace(['*', '`', '|'], "")
 }
 
 /// What a link in a wiki page points to.
@@ -324,13 +390,18 @@ impl Wiki {
     /// # Errors
     ///
     /// Fails like [`crate::load_document`] if the file can't be read.
-    pub fn render(self: &Arc<Self>, path: &Path) -> Result<WikiDocument, DocumentError> {
+    pub fn render(
+        self: &Arc<Self>,
+        path: &Path,
+        options: &RenderOptions,
+    ) -> Result<WikiDocument, DocumentError> {
         let source = read_markdown(path)?;
         let base_dir = source.path.parent().unwrap_or(&self.root).to_path_buf();
         let rendered = render_wiki_page(
             &source.text,
             &base_dir,
             Arc::clone(self) as Arc<dyn LinkRewriter>,
+            options,
         );
 
         let name = source
@@ -356,6 +427,49 @@ impl Wiki {
             modified_ms,
             local_images: rendered.local_images,
         })
+    }
+
+    /// Searches the text of every page, case-insensitively. Pages whose title
+    /// matches come first, then by number of matches. At most `limit` results.
+    pub fn search(&self, query: &str, limit: usize) -> Vec<SearchHit> {
+        let needle = query.trim().to_lowercase();
+        if needle.chars().count() < 2 {
+            return Vec::new();
+        }
+        let mut hits: Vec<(bool, usize, SearchHit)> = self
+            .pages
+            .iter()
+            .filter_map(|page| {
+                let text = fs::read_to_string(&page.path).ok()?;
+                let lower = text.to_lowercase();
+                let count = lower.matches(&needle).count();
+                let in_title = page.title.to_lowercase().contains(&needle);
+                if count == 0 && !in_title {
+                    return None;
+                }
+                let snippet = lower
+                    .find(&needle)
+                    .and_then(|at| snippet(&text, &lower, at, needle.len()));
+                Some((
+                    in_title,
+                    count,
+                    SearchHit {
+                        page: page.clone(),
+                        matches: count,
+                        snippet,
+                    },
+                ))
+            })
+            .collect();
+        hits.sort_by(|a, b| {
+            b.0.cmp(&a.0)
+                .then(b.1.cmp(&a.1))
+                .then(a.2.page.title.cmp(&b.2.page.title))
+        });
+        hits.into_iter()
+            .take(limit)
+            .map(|(_, _, hit)| hit)
+            .collect()
     }
 
     /// For `https://github.com/<owner>/<repo>/wiki[/Page]`, the page name (`Home` for the bare URL).
@@ -668,7 +782,7 @@ mod tests {
     fn renders_pages_with_canonical_links_and_missing_list() {
         let wiki = fixture("render");
         let home = wiki.home().unwrap().path.clone();
-        let doc = wiki.render(&home).unwrap();
+        let doc = wiki.render(&home, &RenderOptions::default()).unwrap();
         let html = doc.html.as_str();
         assert!(html.contains(r#"href="Getting-Started""#), "{html}");
         assert!(
@@ -686,6 +800,31 @@ mod tests {
         assert_eq!(doc.local_images.len(), 1);
         assert_eq!(doc.title, "Home");
         assert!(doc.modified_ms.is_some());
+    }
+
+    #[test]
+    fn searches_page_text_and_titles() {
+        let wiki = fixture("search");
+        let hits = wiki.search("start", 10);
+        // "Getting-Started" matches by title (and text), so it comes first.
+        assert_eq!(hits[0].page.name, "Getting-Started");
+        // Case-insensitive; the snippet keeps the page's own spelling.
+        let hits = wiki.search("APPLY", 10);
+        let overlays = hits
+            .iter()
+            .find(|hit| hit.page.name == "Working-with-Overlays")
+            .unwrap();
+        assert_eq!(overlays.snippet.as_ref().unwrap().hit, "Apply");
+        assert_eq!(wiki.search("x", 10), Vec::new(), "too short");
+        assert_eq!(wiki.search("nothing-like-this", 10), Vec::new());
+    }
+
+    #[test]
+    fn snippets_drop_markup_but_keep_csharp() {
+        assert_eq!(
+            clean_snippet("## Use the C# client\n> **bold** `code` | cell |"),
+            "Use the C# client bold code cell"
+        );
     }
 
     #[test]
