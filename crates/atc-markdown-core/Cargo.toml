@@ -1,0 +1,25 @@
+[package]
+name = "atc-markdown-core"
+description = "UI-independent core of Atc.Markdown: Markdown rendering, documents and file-open handling."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+ammonia.workspace = true
+comrak.workspace = true
+serde.workspace = true
+syntect.workspace = true
+two-face.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+insta.workspace = true
+proptest.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

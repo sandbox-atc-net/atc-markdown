@@ -1,0 +1,13 @@
+---
+source: crates/atc-markdown-core/tests/render_snapshots.rs
+expression: render_markdown(&source).as_str()
+input_file: crates/atc-markdown-core/tests/fixtures/xss.md
+---
+<h1 id="xss-payloads--none-of-these-may-survive-rendering">XSS payloads – none of these may survive rendering<a href="#xss-payloads--none-of-these-may-survive-rendering" aria-label="Link to heading 'XSS payloads – none of these may survive rendering'" class="anchor" rel="noopener noreferrer"></a></h1>
+
+<img src="x.png">
+<p><a rel="noopener noreferrer">js link</a></p>
+<p><a rel="noopener noreferrer">raw js link</a></p>
+
+<div>style attribute</div>
+<details><summary>Allowed details</summary>Hidden text</details>

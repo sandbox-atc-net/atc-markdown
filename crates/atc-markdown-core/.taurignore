@@ -1,0 +1,2 @@
+# Test fixtures and snapshots must not trigger rebuilds in `tauri dev`.
+tests/

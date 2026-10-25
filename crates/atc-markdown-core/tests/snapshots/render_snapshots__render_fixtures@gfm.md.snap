@@ -1,0 +1,49 @@
+---
+source: crates/atc-markdown-core/tests/render_snapshots.rs
+assertion_line: 10
+expression: render_markdown(&source).as_str()
+input_file: crates/atc-markdown-core/tests/fixtures/gfm.md
+---
+<h1 id="github-flavored-markdown">GitHub Flavored Markdown<a href="#github-flavored-markdown" aria-label="Link to heading 'GitHub Flavored Markdown'" class="anchor" rel="noopener noreferrer"></a></h1>
+<p>Some <strong>bold</strong>, <em>italic</em>, <del>strikethrough</del> and <code>inline code</code>.</p>
+<h2 id="table">Table<a href="#table" aria-label="Link to heading 'Table'" class="anchor" rel="noopener noreferrer"></a></h2>
+<table>
+<thead>
+<tr>
+<th align="left">Left</th>
+<th align="center">Center</th>
+<th align="right">Right</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td align="left">a</td>
+<td align="center">b</td>
+<td align="right">c</td>
+</tr>
+</tbody>
+</table>
+<h2 id="task-list">Task list<a href="#task-list" aria-label="Link to heading 'Task list'" class="anchor" rel="noopener noreferrer"></a></h2>
+<ul>
+<li><input type="checkbox" checked="" disabled=""> Done</li>
+<li><input type="checkbox" disabled=""> Not done</li>
+</ul>
+<h2 id="code">Code<a href="#code" aria-label="Link to heading 'Code'" class="anchor" rel="noopener noreferrer"></a></h2>
+<pre class="syntax-highlighting"><code class="language-rust"><span class="hl-source hl-rust"><span class="hl-meta hl-function hl-rust"><span class="hl-meta hl-function hl-rust"><span class="hl-storage hl-type hl-function hl-rust">fn</span> </span><span class="hl-entity hl-name hl-function hl-rust">main</span></span><span class="hl-meta hl-function hl-rust"><span class="hl-meta hl-function hl-parameters hl-rust"><span class="hl-punctuation hl-section hl-parameters hl-begin hl-rust">(</span></span><span class="hl-meta hl-function hl-rust"><span class="hl-meta hl-function hl-parameters hl-rust"><span class="hl-punctuation hl-section hl-parameters hl-end hl-rust">)</span></span></span></span><span class="hl-meta hl-function hl-rust"> </span><span class="hl-meta hl-function hl-rust"><span class="hl-meta hl-block hl-rust"><span class="hl-punctuation hl-section hl-block hl-begin hl-rust">{</span>
+    <span class="hl-support hl-macro hl-rust">println!</span><span class="hl-meta hl-group hl-rust"><span class="hl-punctuation hl-section hl-group hl-begin hl-rust">(</span></span><span class="hl-meta hl-group hl-rust"><span class="hl-string hl-quoted hl-double hl-rust"><span class="hl-punctuation hl-definition hl-string hl-begin hl-rust">"</span>Hello<span class="hl-punctuation hl-definition hl-string hl-end hl-rust">"</span></span></span><span class="hl-meta hl-group hl-rust"><span class="hl-punctuation hl-section hl-group hl-end hl-rust">)</span></span><span class="hl-punctuation hl-terminator hl-rust">;</span>
+</span><span class="hl-meta hl-block hl-rust"><span class="hl-punctuation hl-section hl-block hl-end hl-rust">}</span></span></span>
+</span></code></pre>
+<h2 id="links">Links<a href="#links" aria-label="Link to heading 'Links'" class="anchor" rel="noopener noreferrer"></a></h2>
+<p>Autolink: <a href="https://example.com" rel="noopener noreferrer">https://example.com</a> and <a href="./other.md" rel="noopener noreferrer">relative</a> and <a href="#table" rel="noopener noreferrer">anchor</a>.</p>
+<h2 id="footnote">Footnote<a href="#footnote" aria-label="Link to heading 'Footnote'" class="anchor" rel="noopener noreferrer"></a></h2>
+<p>Text with a footnote.<sup class="footnote-ref"><a href="#fn-1" id="fnref-1" data-footnote-ref="" rel="noopener noreferrer">1</a></sup></p>
+<blockquote>
+<p>A blockquote.</p>
+</blockquote>
+<section class="footnotes" data-footnotes="">
+<ol>
+<li id="fn-1">
+<p>The footnote. <a href="#fnref-1" class="footnote-backref" data-footnote-backref="" aria-label="Back to reference 1" rel="noopener noreferrer">↩</a></p>
+</li>
+</ol>
+</section>
