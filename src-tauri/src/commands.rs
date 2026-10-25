@@ -11,12 +11,64 @@ use std::path::{Path, PathBuf};
 
 use atc_markdown_core::{Document, LinkPreview, LinkTarget, WikiDocument, WikiInfo};
 use serde::Serialize;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_opener::OpenerExt;
 
 use crate::file_open::PendingPaths;
+use crate::settings::{SETTINGS_CHANGED_EVENT, Settings, SettingsStore};
 use crate::watcher::DocumentWatcher;
 use crate::wikis::WikiRegistry;
+
+/// The current settings.
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+pub fn get_settings(settings: State<'_, SettingsStore>) -> Settings {
+    settings.get()
+}
+
+/// Applies a (full or partial) settings object, saves it and tells every window.
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+pub fn update_settings(
+    app: AppHandle,
+    settings: State<'_, SettingsStore>,
+    changes: serde_json::Value,
+) -> Settings {
+    let updated = settings.update(&changes);
+    if let Err(error) = app.emit(SETTINGS_CHANGED_EVENT, &updated) {
+        tracing::warn!(%error, "could not announce settings change");
+    }
+    updated
+}
+
+/// The default settings, for "Reset to defaults".
+#[tauri::command]
+pub fn default_settings() -> Settings {
+    Settings::default()
+}
+
+/// Shows `settings.json` in Explorer / Finder (it is saved on the first change).
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+pub fn reveal_settings_file(app: AppHandle, settings: State<'_, SettingsStore>) {
+    let Some(path) = settings.path() else { return };
+    let result = if path.exists() {
+        app.opener().reveal_item_in_dir(path)
+    } else {
+        path.parent().map_or(Ok(()), |dir| {
+            app.opener().open_path(dir.to_string_lossy(), None::<&str>)
+        })
+    };
+    if let Err(error) = result {
+        tracing::warn!(%error, "could not show settings file");
+    }
+}
+
+/// The code colour choices for the settings page.
+#[tauri::command]
+pub fn code_themes() -> &'static [atc_markdown_core::CodeTheme] {
+    atc_markdown_core::CODE_THEMES
+}
 
 /// Reads and renders a Markdown file, and starts watching it for changes.
 #[tauri::command]
@@ -24,9 +76,11 @@ use crate::wikis::WikiRegistry;
 pub async fn open_document(
     app: AppHandle,
     watcher: State<'_, DocumentWatcher>,
+    settings: State<'_, SettingsStore>,
     path: PathBuf,
 ) -> Result<Document, String> {
-    let document = atc_markdown_core::load_document(&path).map_err(|error| {
+    let options = settings.get().render_options();
+    let document = atc_markdown_core::load_document_with(&path, &options).map_err(|error| {
         tracing::warn!(%error, "failed to open document");
         error.to_string()
     })?;
@@ -104,9 +158,11 @@ pub async fn open_wiki_page(
     app: AppHandle,
     watcher: State<'_, DocumentWatcher>,
     wikis: State<'_, WikiRegistry>,
+    settings: State<'_, SettingsStore>,
     root: PathBuf,
     path: PathBuf,
 ) -> Result<WikiDocument, String> {
+    let options = settings.get().render_options();
     let wiki = wikis.get(&root).map_err(|error| error.to_string())?;
     if !path.exists() {
         let name = path
@@ -118,13 +174,38 @@ pub async fn open_wiki_page(
             name.replace('-', " ")
         ));
     }
-    let document = wiki.render(&path).map_err(|error| {
+    let document = wiki.render(&path, &options).map_err(|error| {
         tracing::warn!(%error, "failed to open wiki page");
         error.to_string()
     })?;
     allow_images(&app, &document.local_images);
     watcher.watch(&document.path);
     Ok(document)
+}
+
+/// Full-text search across the pages of an open wiki.
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+pub async fn search_wiki(
+    wikis: State<'_, WikiRegistry>,
+    root: PathBuf,
+    query: String,
+) -> Result<Vec<atc_markdown_core::SearchHit>, String> {
+    let wiki = wikis.get(&root).map_err(|error| error.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || wiki.search(&query, 50))
+        .await
+        .map_err(|error| error.to_string())
+}
+
+/// Who last changed a wiki page and when, from `git log` (`None` without git).
+#[tauri::command]
+pub async fn git_last_edited(
+    root: PathBuf,
+    path: PathBuf,
+) -> Result<Option<crate::git::LastEdit>, String> {
+    tauri::async_runtime::spawn_blocking(move || crate::git::last_edit(&root, &path))
+        .await
+        .map_err(|error| error.to_string())
 }
 
 /// Called when a wiki tab is closed.
@@ -194,10 +275,11 @@ pub fn reveal_path(app: AppHandle, path: PathBuf) {
     }
 }
 
-/// CSS for syntax-highlighted code blocks (light + dark).
+/// CSS for syntax-highlighted code blocks (light + dark) in the chosen code colours.
 #[tauri::command]
-pub fn highlight_css() -> &'static str {
-    atc_markdown_core::highlight_css()
+#[allow(clippy::needless_pass_by_value)]
+pub fn highlight_css(settings: State<'_, SettingsStore>) -> String {
+    atc_markdown_core::highlight_css_for(&settings.get().appearance.code_theme)
 }
 
 /// Returns (and clears) the files the OS asked us to open.

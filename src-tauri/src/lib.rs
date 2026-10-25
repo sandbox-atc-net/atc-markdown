@@ -3,13 +3,16 @@
 
 mod commands;
 mod file_open;
+mod git;
 mod menu;
+mod settings;
 mod watcher;
 mod wikis;
 
 use tauri::{AppHandle, Manager, RunEvent};
 
 use file_open::PendingPaths;
+use settings::SettingsStore;
 use watcher::DocumentWatcher;
 use wikis::WikiRegistry;
 
@@ -35,6 +38,7 @@ pub fn run() {
         .setup(|app| {
             // Load syntax definitions in the background so the first document opens fast.
             std::thread::spawn(atc_markdown_core::warm_up);
+            app.manage(SettingsStore::load(app.path().app_config_dir().ok()));
             app.manage(DocumentWatcher::new(app.handle().clone()));
             app.set_menu(menu::build(app.handle())?)?;
             app.on_menu_event(|app, event| menu::on_event(app, &event));
@@ -49,12 +53,19 @@ pub fn run() {
             commands::open_wiki,
             commands::open_wiki_page,
             commands::close_wiki,
+            commands::search_wiki,
+            commands::git_last_edited,
             commands::follow_link,
             commands::describe_link,
             commands::reveal_path,
             commands::highlight_css,
             commands::take_pending_paths,
             commands::log_frontend_error,
+            commands::get_settings,
+            commands::update_settings,
+            commands::code_themes,
+            commands::default_settings,
+            commands::reveal_settings_file,
         ])
         .build(tauri::generate_context!());
 

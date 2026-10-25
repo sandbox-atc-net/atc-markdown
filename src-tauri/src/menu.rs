@@ -19,6 +19,10 @@ pub const COMMAND_IDS: &[&str] = &[
     "go-forward",
     "toggle-sidebar",
     "find-page",
+    "settings",
+    "toggle-outline",
+    "reopen-tab",
+    "print",
     "reload",
     "find",
     "find-next",
@@ -57,7 +61,10 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
         .item(&item("open", "&Open…", &m("O"))?)
         .item(&item("open-wiki", "Open &Wiki Folder…", &m("Shift+O"))?)
         .separator()
-        .item(&item("close-tab", "&Close Tab", &m("W"))?);
+        .item(&item("print", "&Print…", &m("Shift+P"))?)
+        .separator()
+        .item(&item("close-tab", "&Close Tab", &m("W"))?)
+        .item(&item("reopen-tab", "&Reopen Closed Tab", &m("Shift+T"))?);
     if !cfg!(target_os = "macos") {
         file = file.separator().quit_with_text("E&xit");
     }
@@ -67,10 +74,16 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
         // WKWebView only gets Copy / Select All through the menu.
         edit = edit.copy().select_all().separator();
     }
-    let edit = edit
+    let mut edit = edit
         .item(&item("find", "&Find…", &m("F"))?)
         .item(&item("find-next", "Find &Next", "F3")?)
         .item(&item("find-previous", "Find &Previous", "Shift+F3")?);
+    if !cfg!(target_os = "macos") {
+        // macOS has Settings in the application menu instead.
+        edit = edit
+            .separator()
+            .item(&item("settings", "&Settings…", &m(","))?);
+    }
 
     let view = SubmenuBuilder::new(app, "&View")
         .item(&item("reload", "&Reload", "F5")?)
@@ -79,6 +92,7 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
         .item(&item("go-forward", "&Forward", "Alt+Right")?)
         .item(&item("toggle-sidebar", "Toggle Wiki &Sidebar", &m("B"))?)
         .item(&item("find-page", "&Go to Wiki Page…", &m("P"))?)
+        .item(&item("toggle-outline", "&Outline", &m("Shift+L"))?)
         .separator()
         .item(&item("zoom-in", "Zoom &In", &m("="))?)
         .item(&item("zoom-out", "Zoom &Out", &m("-"))?)
@@ -92,6 +106,8 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
         // On macOS the first submenu is the application menu.
         let app_menu = SubmenuBuilder::new(app, &package.name)
             .about(Some(about.clone()))
+            .separator()
+            .item(&item("settings", "Settings…", "")?)
             .separator()
             .services()
             .separator()
