@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { activateTab, activeTab, closeTab, emptyTabs, openTab, replaceTab, updateTab, type OpenDocument } from "./tabs";
+import { activateTab, activeTab, closeTab, emptyTabs, openTab, replaceTab, uniqueTabPath, updateTab, type OpenDocument } from "./tabs";
 
 const doc = (path: string): OpenDocument => ({ path, title: path, html: `<p>${path}</p>` });
 
@@ -71,5 +71,13 @@ describe("replaceTab", () => {
 
   it("opens a new tab when there is nothing to replace", () => {
     expect(replaceTab(emptyTabs, -1, doc("a.md")).tabs).toHaveLength(1);
+  });
+});
+
+describe("uniqueTabPath", () => {
+  it("uses the base when free, then numbers it", () => {
+    expect(uniqueTabPath([], "C:/w")).toBe("C:/w");
+    expect(uniqueTabPath(["c:/W"], "C:/w")).toBe("C:/w::2");
+    expect(uniqueTabPath(["C:/w", "C:/w::2"], "C:/w")).toBe("C:/w::3");
   });
 });

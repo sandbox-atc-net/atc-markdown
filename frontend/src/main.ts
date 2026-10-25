@@ -26,6 +26,7 @@ import {
   openTab,
   replaceTab,
   SETTINGS_TAB_PATH,
+  uniqueTabPath,
   updateTab,
   type OpenDocument,
   type TabState,
@@ -121,7 +122,8 @@ let pendingScroll: { tab: string; top: number; fragment?: string } | undefined;
 /** The file shown in the active tab (the current page for a wiki). */
 const shownPath = (): string | undefined => shown?.wiki?.page.path ?? shown?.path;
 /** The wiki folder of the active tab, if it is a wiki. */
-const shownWikiRoot = (): string | undefined => (shown?.wiki ? shown.path : undefined);
+/** The wiki folder of the active tab, if it is a wiki (a wiki can be open in several tabs). */
+const shownWikiRoot = (): string | undefined => shown?.wiki?.info.root;
 
 // ---------------------------------------------------------------- rendering
 
@@ -377,6 +379,12 @@ async function loadPath(path: string): Promise<OpenDocument | undefined> {
  */
 async function openPaths(paths: string[], fromOs = false): Promise<void> {
   for (const path of paths) {
+    const kind = await invoke<PathKind>("path_kind", { path });
+    if (kind.kind === "wiki") {
+      // An open wiki is switched to, not reloaded at Home.
+      await openWiki(kind.root);
+      continue;
+    }
     const doc = await loadPath(path);
     if (!doc) continue;
     const active = activeTab(state);
@@ -406,18 +414,34 @@ function closeDocument(index: number): void {
   if (!doc) return;
   if (!doc.settings) {
     const entry: SessionTab = doc.wiki
-      ? { kind: "wiki", root: doc.path, page: doc.wiki.page.path }
+      ? { kind: "wiki", root: doc.wiki.info.root, page: doc.wiki.page.path }
       : { kind: "document", path: doc.path };
-    closedTabs = remember(closedTabs.map(withPath), withPath(entry), MAX_CLOSED).map((c) => c.tab);
+    closedTabs = [entry, ...closedTabs].slice(0, MAX_CLOSED);
   }
   scrollPositions.delete(doc.path);
   if (doc.wiki) {
-    const files = [doc.wiki.page.path, doc.wiki.sidebar?.path, doc.wiki.footer?.path].filter(Boolean);
-    void invoke("close_wiki", { root: doc.path, files });
+    // Keep watching what another tab still shows.
+    const root = doc.wiki.info.root;
+    const files = [doc.wiki.page.path, doc.wiki.sidebar?.path, doc.wiki.footer?.path].filter(
+      (file): file is string => file !== undefined && !fileShownElsewhere(file, doc.path),
+    );
+    const lastTabOfWiki = !state.tabs.some((t) => t !== doc && t.wiki?.info.root === root);
+    if (lastTabOfWiki) void invoke("close_wiki", { root, files });
+    else for (const path of files) void invoke("close_document", { path });
   } else if (!doc.settings) {
     void invoke("close_document", { path: doc.path });
   }
   setState(closeTab(state, index));
+}
+
+/** True if a tab other than `exceptTab` shows `file` (as a document or a wiki page, sidebar or footer). */
+function fileShownElsewhere(file: string, exceptTab: string): boolean {
+  const same = (path: string | undefined) => path?.toLowerCase() === file.toLowerCase();
+  return state.tabs.some(
+    (t) =>
+      t.path !== exceptTab &&
+      (t.wiki ? same(t.wiki.page.path) || same(t.wiki.sidebar?.path) || same(t.wiki.footer?.path) : same(t.path)),
+  );
 }
 
 function errorDocument(path: string, message: string): OpenDocument {
@@ -485,14 +509,28 @@ async function loadWikiTab(root: string, page?: string, history?: History): Prom
   return wikiTab({ info, page: pageDoc, sidebar, footer, history: history ?? startHistory(pageDoc.path) });
 }
 
-function wikiTab(view: WikiView): OpenDocument {
-  return { path: view.info.root, title: view.info.name, html: view.page.html, wiki: view };
+/** A wiki tab. `tabPath` is the tab's id: the wiki folder, or `folder::2`… for more tabs of it. */
+function wikiTab(view: WikiView, tabPath = view.info.root): OpenDocument {
+  return { path: tabPath, title: view.info.name, html: view.page.html, wiki: view };
+}
+
+/** Ctrl+click / middle-click on a wiki link: the page in a new tab of the same wiki. */
+async function openWikiPageInNewTab(path: string, fragment?: string | null): Promise<void> {
+  const root = shownWikiRoot();
+  if (!root) return;
+  const tab = await loadWikiTab(root, path);
+  const tabPath = uniqueTabPath(
+    state.tabs.map((t) => t.path),
+    root,
+  );
+  pendingScroll = { tab: tabPath, top: 0, fragment: fragment ?? undefined };
+  setState(openTab(state, { ...tab, path: tabPath }));
 }
 
 /** Opens a wiki folder in a tab (or switches to it), optionally at a page. */
 async function openWiki(root: string, page?: string): Promise<void> {
   const info = await invoke<WikiInfo>("open_wiki", { root });
-  const index = state.tabs.findIndex((tab) => tab.wiki && tab.path.toLowerCase() === info.root.toLowerCase());
+  const index = state.tabs.findIndex((tab) => tab.wiki?.info.root.toLowerCase() === info.root.toLowerCase());
   if (index >= 0) {
     setState(activateTab(state, index));
     if (page) await goToWikiPage(page);
@@ -535,15 +573,15 @@ async function showWikiPage(
   const view = tab.wiki;
   if (!view) return;
   const page = await loadWikiPage(view.info.root, path);
-  // Stop watching the page we left (the sidebar and footer stay).
+  // Stop watching the page we left (unless something still shows it).
   const old = view.page.path;
-  if (![page.path, view.sidebar?.path, view.footer?.path].includes(old)) {
+  if (![page.path, view.sidebar?.path, view.footer?.path].includes(old) && !fileShownElsewhere(old, tab.path)) {
     void invoke("close_document", { path: old });
   }
   // The tab may have changed while the page loaded; use its latest version.
   const latest = state.tabs.find((t) => t.path === tab.path)?.wiki ?? view;
   pendingScroll = { tab: tab.path, top: scroll, fragment };
-  setState(updateTab(state, wikiTab({ ...latest, page, history })));
+  setState(updateTab(state, wikiTab({ ...latest, page, history }, tab.path)));
 }
 
 /** Re-renders whatever part of a wiki tab `path` is (page, sidebar or footer). */
@@ -563,20 +601,22 @@ async function refreshWikiFile(tab: OpenDocument, path: string): Promise<void> {
   const isShown = shown?.path === tab.path;
   const scroll = content.scrollTop;
   if (isShown) pendingScroll = { tab: tab.path, top: scroll };
-  setState(updateTab(state, wikiTab(next)));
+  setState(updateTab(state, wikiTab(next, tab.path)));
 }
 
 /** Pages were added, renamed or removed: refresh the page list (and the page, if it moved). */
 async function refreshWikiPages(root: string): Promise<void> {
-  const tab = state.tabs.find((t) => t.wiki && t.path.toLowerCase() === root.toLowerCase());
-  if (!tab?.wiki) return;
-  const info = await invoke<WikiInfo>("open_wiki", { root: tab.path });
-  const latest = state.tabs.find((t) => t.path === tab.path)?.wiki ?? tab.wiki;
+  const isThisWiki = (t: OpenDocument) => t.wiki?.info.root.toLowerCase() === root.toLowerCase();
+  if (!state.tabs.some(isThisWiki)) return;
+  const info = await invoke<WikiInfo>("open_wiki", { root });
   // Most events are plain edits, already handled by `document-changed`.
   const names = (i: WikiInfo) => JSON.stringify([i.pages.map((p) => p.path), i.sidebar, i.footer]);
-  if (names(info) === names(latest.info)) return;
-  if (shown?.path === tab.path) pendingScroll = { tab: tab.path, top: content.scrollTop };
-  setState(updateTab(state, wikiTab({ ...latest, info })));
+  for (const tab of state.tabs.filter(isThisWiki)) {
+    const latest = tab.wiki;
+    if (!latest || names(info) === names(latest.info)) continue;
+    if (shown?.path === tab.path) pendingScroll = { tab: tab.path, top: content.scrollTop };
+    setState(updateTab(state, wikiTab({ ...latest, info }, tab.path)));
+  }
 }
 
 /** Reloads the active tab from disk (F5). */
@@ -587,9 +627,9 @@ async function reloadActive(): Promise<void> {
     await reloadDocument(tab.path);
     return;
   }
-  const reloaded = await loadWikiTab(tab.path, tab.wiki.page.path, tab.wiki.history);
+  const reloaded = await loadWikiTab(tab.wiki.info.root, tab.wiki.page.path, tab.wiki.history);
   pendingScroll = { tab: tab.path, top: content.scrollTop };
-  setState(updateTab(state, reloaded));
+  setState(updateTab(state, { ...reloaded, path: tab.path }));
 }
 
 /** A file changed on disk: reload every tab that shows it. */
@@ -612,7 +652,17 @@ const systemDark = window.matchMedia("(prefers-color-scheme: dark)");
 const THEME_KEY = "atc-markdown.theme";
 
 /** Applies theme, classes and CSS variables for the current settings. */
+/** True while the print preview is open (the page must not change under it). */
+let printing = false;
+window.addEventListener("beforeprint", () => (printing = true));
+window.addEventListener("afterprint", () => {
+  printing = false;
+  applySettings();
+});
+
 function applySettings(): void {
+  // Print mode reports a light colour scheme; redrawing now would print diagrams as source.
+  if (printing) return;
   const look = applied(settings, systemDark.matches);
   const themeChanged = document.documentElement.dataset.theme !== look.theme;
   document.documentElement.dataset.theme = look.theme;
@@ -675,7 +725,7 @@ async function reloadAllTabs(): Promise<void> {
     if (tab.settings) continue;
     if (tab.wiki) {
       const latest = state.tabs.find((t) => t.path === tab.path)?.wiki ?? tab.wiki;
-      const reloaded = await loadWikiTab(tab.path, latest.page.path, latest.history);
+      const reloaded = { ...(await loadWikiTab(latest.info.root, latest.page.path, latest.history)), path: tab.path };
       if (shown?.path === tab.path) pendingScroll = { tab: tab.path, top: content.scrollTop };
       setState(updateTab(state, reloaded));
     } else {
@@ -796,7 +846,6 @@ const RECENT_KEY = "atc-markdown.recent";
 /** Closed tabs, newest first (this session only). */
 let closedTabs: SessionTab[] = [];
 
-const withPath = (tab: SessionTab) => ({ path: tab.kind === "wiki" ? tab.root : tab.path, tab });
 
 function loadRecent(): RecentEntry[] {
   try {
@@ -851,8 +900,18 @@ async function reopenClosedTab(): Promise<void> {
   if (!tab) return;
   closedTabs = rest;
   const doc = await restoreTab(tab);
-  if (doc) setState(openTab(state, doc));
-  else showToast("That file is no longer there");
+  if (!doc) {
+    showToast("That file is no longer there");
+    return;
+  }
+  // A wiki may still be open in another tab; the reopened one gets its own tab.
+  const path = doc.wiki
+    ? uniqueTabPath(
+        state.tabs.map((t) => t.path),
+        doc.path,
+      )
+    : doc.path;
+  setState(openTab(state, { ...doc, path }));
 }
 
 // ---------------------------------------------------------------- session
@@ -901,6 +960,13 @@ async function startup(): Promise<void> {
     Promise.all(pending.map((path) => loadPath(path).catch(() => undefined))),
   ]);
   const openedDocs = opened.filter((doc): doc is OpenDocument => doc !== undefined);
+  const ids: string[] = [];
+  for (const [i, doc] of restored.entries()) {
+    if (!doc?.wiki) continue;
+    const id = uniqueTabPath(ids, doc.path);
+    ids.push(id);
+    restored[i] = { ...doc, path: id };
+  }
   setState(startupState(restored, session?.active ?? null, openedDocs));
 }
 
@@ -918,7 +984,7 @@ function linkFromEvent(e: Event): HTMLAnchorElement | null {
 }
 
 // The webview never navigates: every click is handed to Rust, which decides.
-async function followHref(href: string): Promise<void> {
+async function followHref(href: string, newTab = false): Promise<void> {
   const documentPath = shownPath();
   if (!documentPath) return;
   const wikiRoot = shownWikiRoot();
@@ -941,7 +1007,8 @@ async function followHref(href: string): Promise<void> {
       break;
     case "document":
       if (wikiRoot && isInside(wikiRoot, target.path)) {
-        await goToWikiPage(target.path, target.fragment);
+        if (newTab) await openWikiPageInNewTab(target.path, target.fragment);
+        else await goToWikiPage(target.path, target.fragment);
       } else {
         await openPaths([target.path]);
         if (target.fragment) scrollToId(target.fragment);
@@ -962,7 +1029,7 @@ async function handleLinkClick(e: MouseEvent): Promise<void> {
     return;
   }
   const href = link.getAttribute("href");
-  if (href) await followHref(href);
+  if (href) await followHref(href, e.ctrlKey || e.metaKey || e.button === 1);
 }
 
 /**
@@ -1153,6 +1220,13 @@ function handleMenuKeys(e: KeyboardEvent): void {
 function wireLinks(): void {
   for (const area of [preview, wikiSidebarBody, wikiFooter]) {
     area.addEventListener("click", (e) => void handleLinkClick(e).catch(reportError));
+    // Middle-click opens in a new tab (and must not start auto-scrolling).
+    area.addEventListener("mousedown", (e) => {
+      if (e.button === 1 && linkFromEvent(e)) e.preventDefault();
+    });
+    area.addEventListener("auxclick", (e) => {
+      if (e.button === 1 && linkFromEvent(e)) void handleLinkClick(e).catch(reportError);
+    });
     area.addEventListener("mouseover", (e) => {
       const link = linkFromEvent(e);
       if (link && link !== hoveredLink) showLinkStatus(link);

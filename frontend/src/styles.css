@@ -551,6 +551,9 @@ body.sidebar-hidden .viewport.has-sidebar .link-status:not(.right) { left: 8px; 
   background: currentColor;
   -webkit-mask: var(--alert-icon) center / contain no-repeat;
   mask: var(--alert-icon) center / contain no-repeat;
+  /* The icon is a background; print it like on screen. */
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
 }
 .markdown-body .markdown-alert-note {
   --alert-color: var(--alert-note);
@@ -649,10 +652,11 @@ body.line-numbers .markdown-body .line-numbers {
   top: 0;
   left: 0;
   padding: 16px 0;
-  width: 3.2em;
+  width: 2.72em;
   counter-reset: line;
   font-family: var(--font-mono);
-  font-size: 85%;
+  /* Same font size and line height as the <pre>, so each row matches a code
+     line; only the digits themselves are drawn smaller (below). */
   line-height: 1.45;
   text-align: right;
   color: var(--muted);
@@ -661,7 +665,7 @@ body.line-numbers .markdown-body .line-numbers {
   pointer-events: none;
 }
 body.line-numbers .markdown-body .line-numbers > span { display: block; padding-right: 0.8em; }
-body.line-numbers .markdown-body .line-numbers > span::before { counter-increment: line; content: counter(line); }
+body.line-numbers .markdown-body .line-numbers > span::before { counter-increment: line; content: counter(line); font-size: 85%; }
 body.line-numbers .markdown-body .code-block.numbered > pre { padding-left: calc(2.72em + 14px); }
 
 /* ------------------------------------------------------------ settings tab */

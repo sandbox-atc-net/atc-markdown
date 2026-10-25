@@ -83,3 +83,16 @@ export function activeTab(state: TabState): OpenDocument | undefined {
 function samePath(a: string, b: string): boolean {
   return a.toLowerCase() === b.toLowerCase();
 }
+
+/**
+ * A tab id not used by any open tab: `base` itself, or `base::2`, `base::3`…
+ * Lets the same wiki be open in more than one tab.
+ */
+export function uniqueTabPath(paths: readonly string[], base: string): string {
+  const used = new Set(paths.map((p) => p.toLowerCase()));
+  if (!used.has(base.toLowerCase())) return base;
+  for (let n = 2; ; n += 1) {
+    const candidate = `${base}::${n}`;
+    if (!used.has(candidate.toLowerCase())) return candidate;
+  }
+}
