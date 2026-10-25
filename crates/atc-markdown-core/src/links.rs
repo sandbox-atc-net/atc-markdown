@@ -89,7 +89,11 @@ pub struct LinkPreview {
 
 /// Describes a link for the hover preview, without opening anything.
 pub fn describe_link(document_path: &Path, href: &str) -> LinkPreview {
-    let target = resolve_link(document_path, href);
+    preview_target(resolve_link(document_path, href))
+}
+
+/// Adds whether a local target exists, for the hover preview.
+pub fn preview_target(target: LinkTarget) -> LinkPreview {
     let exists = match &target {
         LinkTarget::Document { path, .. } | LinkTarget::LocalFile { path } => path.exists(),
         _ => true,

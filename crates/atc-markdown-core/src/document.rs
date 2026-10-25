@@ -58,6 +58,32 @@ pub enum DocumentError {
 /// Returns a [`DocumentError`] if the file is missing, not a regular file,
 /// larger than [`MAX_DOCUMENT_BYTES`], or not valid UTF-8.
 pub fn load_document(path: &Path) -> Result<Document, DocumentError> {
+    let source = read_markdown(path)?;
+    let base_dir = source.path.parent().unwrap_or(Path::new(""));
+    let rendered = render_document(&source.text, base_dir);
+
+    Ok(Document {
+        title: file_title(&source.path),
+        html: rendered.html,
+        local_images: rendered.local_images,
+        path: source.path,
+    })
+}
+
+/// A Markdown file read from disk, before rendering.
+#[derive(Debug, Clone)]
+pub(crate) struct MarkdownSource {
+    /// Canonical absolute path, without the Windows verbatim (`\\?\`) prefix.
+    pub path: PathBuf,
+    /// The text, without a UTF-8 byte order mark.
+    pub text: String,
+    /// Last modification time, if the OS reports one.
+    pub modified: Option<std::time::SystemTime>,
+}
+
+/// Reads a Markdown file with the same checks for every caller: it must be a
+/// regular file, at most [`MAX_DOCUMENT_BYTES`], and UTF-8.
+pub(crate) fn read_markdown(path: &Path) -> Result<MarkdownSource, DocumentError> {
     let io_err = |source| DocumentError::Io {
         path: path.to_path_buf(),
         source,
@@ -77,17 +103,14 @@ pub fn load_document(path: &Path) -> Result<Document, DocumentError> {
 
     let bytes = fs::read(&path).map_err(io_err)?;
     let bytes = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&bytes);
-    let source = std::str::from_utf8(bytes).map_err(|_| DocumentError::NotUtf8(path.clone()))?;
+    let text = std::str::from_utf8(bytes)
+        .map_err(|_| DocumentError::NotUtf8(path.clone()))?
+        .to_owned();
 
-    let path = strip_verbatim_prefix(path);
-    let base_dir = path.parent().unwrap_or(Path::new(""));
-    let rendered = render_document(source, base_dir);
-
-    Ok(Document {
-        title: file_title(&path),
-        html: rendered.html,
-        local_images: rendered.local_images,
-        path,
+    Ok(MarkdownSource {
+        path: strip_verbatim_prefix(path),
+        text,
+        modified: metadata.modified().ok(),
     })
 }
 
@@ -99,7 +122,7 @@ fn file_title(path: &Path) -> String {
 }
 
 /// On Windows `canonicalize` returns `\\?\C:\...`; show users the familiar `C:\...` form.
-fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
+pub(crate) fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
     let text = path.to_string_lossy();
     match text.strip_prefix(r"\\?\") {
         Some(rest) if !rest.starts_with("UNC\\") => PathBuf::from(rest),

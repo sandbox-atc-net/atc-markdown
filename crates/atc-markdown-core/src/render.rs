@@ -32,6 +32,24 @@ pub struct Rendered {
     pub html: SanitizedHtml,
     /// Local image files the HTML refers to. The app must allow the webview to load these.
     pub local_images: Vec<PathBuf>,
+    /// Links (as written) that point to pages that don't exist. Only filled in wiki mode.
+    pub missing_links: Vec<String>,
+}
+
+/// What to do with a link's `href` while sanitizing (used by wiki mode).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum LinkRewrite {
+    /// Leave the link as written.
+    Keep,
+    /// Replace the href, e.g. with a canonical page name.
+    Replace(String),
+    /// The link points to a page that doesn't exist.
+    Missing,
+}
+
+/// Decides how links are rewritten while sanitizing.
+pub(crate) trait LinkRewriter: Send + Sync {
+    fn rewrite(&self, href: &str) -> LinkRewrite;
 }
 
 /// Renders GitHub Flavored Markdown to sanitized HTML, without resolving local images.
@@ -39,7 +57,7 @@ pub struct Rendered {
 /// Raw HTML in the source is allowed through the parser and then cleaned by an
 /// allow-list sanitizer: scripts, event handlers and `javascript:` URLs are removed.
 pub fn render_markdown(source: &str) -> SanitizedHtml {
-    render_with_base(source, None).html
+    render_with(source, None, None).html
 }
 
 /// Renders a document located in `base_dir`.
@@ -48,26 +66,57 @@ pub fn render_markdown(source: &str) -> SanitizedHtml {
 /// rewritten to asset-protocol URLs the webview can load. Links are left as written;
 /// see [`crate::resolve_link`] for what happens when one is clicked.
 pub fn render_document(source: &str, base_dir: &Path) -> Rendered {
-    render_with_base(source, Some(base_dir))
+    render_with(source, Some(base_dir), None)
 }
 
-fn render_with_base(source: &str, base_dir: Option<&Path>) -> Rendered {
+/// Renders a wiki page: `[[Page]]` links are enabled and every link goes through `links`.
+pub(crate) fn render_wiki_page(
+    source: &str,
+    base_dir: &Path,
+    links: Arc<dyn LinkRewriter>,
+) -> Rendered {
+    render_with(source, Some(base_dir), Some(links))
+}
+
+fn render_with(
+    source: &str,
+    base_dir: Option<&Path>,
+    links: Option<Arc<dyn LinkRewriter>>,
+) -> Rendered {
     let mut plugins = comrak::options::Plugins::default();
     plugins.render.codefence_syntax_highlighter = Some(&Highlighter);
-    let html = comrak::markdown_to_html_with_plugins(source, &COMRAK_OPTIONS, &plugins);
-
-    let images = Arc::new(Mutex::new(Vec::new()));
-    let html = match base_dir {
-        None => SANITIZER.clean(&html).to_string(),
-        Some(dir) => sanitizer_with_images(dir.to_path_buf(), Arc::clone(&images))
-            .clean(&html)
-            .to_string(),
+    let options = if links.is_some() {
+        &*WIKI_COMRAK_OPTIONS
+    } else {
+        &*COMRAK_OPTIONS
     };
-    let local_images = std::mem::take(&mut *images.lock().unwrap_or_else(PoisonError::into_inner));
+    let html = comrak::markdown_to_html_with_plugins(source, options, &plugins);
+
+    if base_dir.is_none() && links.is_none() {
+        return Rendered {
+            html: SanitizedHtml(SANITIZER.clean(&html).to_string()),
+            local_images: Vec::new(),
+            missing_links: Vec::new(),
+        };
+    }
+
+    let found = Arc::new(Mutex::new(Found::default()));
+    let html = filtering_sanitizer(base_dir.map(Path::to_path_buf), links, Arc::clone(&found))
+        .clean(&html)
+        .to_string();
+    let found = std::mem::take(&mut *found.lock().unwrap_or_else(PoisonError::into_inner));
     Rendered {
         html: SanitizedHtml(html),
-        local_images,
+        local_images: found.images,
+        missing_links: found.missing_links,
     }
+}
+
+/// What the sanitizer's attribute filter collected while cleaning.
+#[derive(Debug, Default)]
+struct Found {
+    images: Vec<PathBuf>,
+    missing_links: Vec<String>,
 }
 
 static COMRAK_OPTIONS: LazyLock<comrak::Options<'static>> = LazyLock::new(|| {
@@ -81,6 +130,13 @@ static COMRAK_OPTIONS: LazyLock<comrak::Options<'static>> = LazyLock::new(|| {
     ext.header_id_prefix = Some(String::new());
     // Raw HTML is passed through here and cleaned by the sanitizer afterwards.
     options.render.r#unsafe = true;
+    options
+});
+
+/// GitHub wiki pages also support `[[Page]]` and `[[Link text|Page]]`.
+static WIKI_COMRAK_OPTIONS: LazyLock<comrak::Options<'static>> = LazyLock::new(|| {
+    let mut options = COMRAK_OPTIONS.clone();
+    options.extension.wikilinks_title_before_pipe = true;
     options
 });
 
@@ -106,26 +162,41 @@ fn base_sanitizer() -> ammonia::Builder<'static> {
 
 static SANITIZER: LazyLock<ammonia::Builder<'static>> = LazyLock::new(base_sanitizer);
 
-/// A sanitizer that also rewrites relative `<img src>` to asset URLs and records them.
-fn sanitizer_with_images(
-    base_dir: PathBuf,
-    images: Arc<Mutex<Vec<PathBuf>>>,
+/// A sanitizer that also rewrites relative `<img src>` to asset URLs (recording
+/// them), and passes link hrefs through `links` when given.
+fn filtering_sanitizer(
+    base_dir: Option<PathBuf>,
+    links: Option<Arc<dyn LinkRewriter>>,
+    found: Arc<Mutex<Found>>,
 ) -> ammonia::Builder<'static> {
     let mut builder = base_sanitizer();
     builder.attribute_filter(move |element, attribute, value| {
-        if element != "img" || attribute != "src" {
-            return Some(Cow::Borrowed(value));
-        }
-        match resolve_relative(&base_dir, value).filter(|p| is_image_file(p)) {
-            Some(path) => {
-                let url = asset_url(&path);
-                images
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .push(path);
-                Some(Cow::Owned(url))
+        let record =
+            |f: &dyn Fn(&mut Found)| f(&mut found.lock().unwrap_or_else(PoisonError::into_inner));
+        match (element, attribute) {
+            ("img", "src") => {
+                let image = base_dir
+                    .as_deref()
+                    .and_then(|dir| resolve_relative(dir, value))
+                    .filter(|p| is_image_file(p));
+                match image {
+                    Some(path) => {
+                        let url = asset_url(&path);
+                        record(&|found| found.images.push(path.clone()));
+                        Some(Cow::Owned(url))
+                    }
+                    None => Some(Cow::Borrowed(value)),
+                }
             }
-            None => Some(Cow::Borrowed(value)),
+            ("a", "href") => match links.as_deref().map(|links| links.rewrite(value)) {
+                Some(LinkRewrite::Replace(href)) => Some(Cow::Owned(href)),
+                Some(LinkRewrite::Missing) => {
+                    record(&|found| found.missing_links.push(value.to_owned()));
+                    Some(Cow::Borrowed(value))
+                }
+                Some(LinkRewrite::Keep) | None => Some(Cow::Borrowed(value)),
+            },
+            _ => Some(Cow::Borrowed(value)),
         }
     });
     builder

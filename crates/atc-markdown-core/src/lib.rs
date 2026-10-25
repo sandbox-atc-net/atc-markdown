@@ -12,11 +12,16 @@ mod highlight;
 mod links;
 mod paths;
 mod render;
+mod wiki;
 
 pub use args::paths_from_args;
 pub use document::{Document, DocumentError, MAX_DOCUMENT_BYTES, load_document};
 pub use highlight::{code_language, highlight_css, warm_up};
 pub use links::{
-    LinkPreview, LinkTarget, MARKDOWN_EXTENSIONS, describe_link, is_markdown_file, resolve_link,
+    LinkPreview, LinkTarget, MARKDOWN_EXTENSIONS, describe_link, is_markdown_file, preview_target,
+    resolve_link,
 };
 pub use render::{Rendered, SanitizedHtml, render_document, render_markdown};
+pub use wiki::{
+    GitHubRepo, Wiki, WikiDocument, WikiHref, WikiInfo, WikiPage, find_wiki_root, is_wiki_dir,
+};
