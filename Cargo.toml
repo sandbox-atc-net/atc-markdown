@@ -1,0 +1,57 @@
+[workspace]
+resolver = "3"
+members = ["crates/atc-markdown-core", "src-tauri"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT"
+authors = ["ATC.Net"]
+repository = "https://github.com/atc-net/atc-markdown"
+
+[workspace.dependencies]
+atc-markdown-core = { path = "crates/atc-markdown-core" }
+
+ammonia = "4.2"
+comrak = { version = "0.57", default-features = false, features = ["syntect-onig"] }
+syntect = { version = "5.3", default-features = false, features = ["default-syntaxes", "default-themes", "html", "regex-onig"] }
+two-face = { version = "0.5", default-features = false, features = ["syntect-onig"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+tauri = { version = "2.12", features = ["protocol-asset"] }
+tauri-build = { version = "2.7", features = [] }
+tauri-plugin-single-instance = "2.5"
+tauri-plugin-dialog = "2.8"
+tauri-plugin-opener = "2.7"
+tauri-plugin-window-state = "2.5"
+notify-debouncer-mini = "0.7"
+
+# Dev / test
+insta = { version = "1.49", features = ["glob"] }
+proptest = "1.12"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "warn"
+expect_used = "warn"
+dbg_macro = "warn"
+todo = "warn"
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

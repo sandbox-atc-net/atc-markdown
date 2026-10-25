@@ -426,3 +426,19 @@ FodyWeavers.xsd
 
 # Official VS Code C# Dev Kit Extension exclusion
 #*.lscache
+
+# Local planning notes
+/plans/
+
+# Rust / Cargo
+/target/
+
+# Tauri generated files
+/src-tauri/gen/
+
+# Frontend build output
+/dist/
+
+# insta pending snapshots
+*.pending-snap
+*.snap.new
