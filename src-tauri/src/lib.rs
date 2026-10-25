@@ -5,11 +5,13 @@ mod commands;
 mod file_open;
 mod menu;
 mod watcher;
+mod wikis;
 
 use tauri::{AppHandle, Manager, RunEvent};
 
 use file_open::PendingPaths;
 use watcher::DocumentWatcher;
+use wikis::WikiRegistry;
 
 /// Builds and runs the app.
 pub fn run() {
@@ -29,6 +31,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(PendingPaths::default())
+        .manage(WikiRegistry::default())
         .setup(|app| {
             // Load syntax definitions in the background so the first document opens fast.
             std::thread::spawn(atc_markdown_core::warm_up);
@@ -42,6 +45,10 @@ pub fn run() {
             commands::open_document,
             commands::close_document,
             commands::close_all_documents,
+            commands::path_kind,
+            commands::open_wiki,
+            commands::open_wiki_page,
+            commands::close_wiki,
             commands::follow_link,
             commands::describe_link,
             commands::reveal_path,

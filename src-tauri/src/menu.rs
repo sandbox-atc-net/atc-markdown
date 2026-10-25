@@ -13,7 +13,12 @@ pub const MENU_COMMAND_EVENT: &str = "menu-command";
 /// Ids of the custom menu items. Must match `Command` in `frontend/src/main.ts`.
 pub const COMMAND_IDS: &[&str] = &[
     "open",
+    "open-wiki",
     "close-tab",
+    "go-back",
+    "go-forward",
+    "toggle-sidebar",
+    "find-page",
     "reload",
     "find",
     "find-next",
@@ -50,6 +55,7 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
 
     let mut file = SubmenuBuilder::new(app, "&File")
         .item(&item("open", "&Open…", &m("O"))?)
+        .item(&item("open-wiki", "Open &Wiki Folder…", &m("Shift+O"))?)
         .separator()
         .item(&item("close-tab", "&Close Tab", &m("W"))?);
     if !cfg!(target_os = "macos") {
@@ -68,6 +74,11 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
 
     let view = SubmenuBuilder::new(app, "&View")
         .item(&item("reload", "&Reload", "F5")?)
+        .separator()
+        .item(&item("go-back", "&Back", "Alt+Left")?)
+        .item(&item("go-forward", "&Forward", "Alt+Right")?)
+        .item(&item("toggle-sidebar", "Toggle Wiki &Sidebar", &m("B"))?)
+        .item(&item("find-page", "&Go to Wiki Page…", &m("P"))?)
         .separator()
         .item(&item("zoom-in", "Zoom &In", &m("="))?)
         .item(&item("zoom-out", "Zoom &Out", &m("-"))?)
