@@ -13,6 +13,10 @@ export default defineConfig({
     outDir: "../dist",
     emptyOutDir: true,
     target: "es2022",
+    // Mermaid's diagram types are large, but each is loaded only when a document needs it.
+    chunkSizeWarningLimit: 2000,
+    // Never inline assets as data: URLs (e.g. small KaTeX fonts): the CSP only allows 'self'.
+    assetsInlineLimit: 0,
   },
   test: {
     root: ".",

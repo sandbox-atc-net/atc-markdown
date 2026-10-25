@@ -18,12 +18,14 @@
             id="wiki-pages-filter"
             class="wiki-pages-filter"
             type="text"
-            placeholder="Find a page…"
+            placeholder="Find a page or text…"
             aria-label="Find a page"
             spellcheck="false"
             autocomplete="off"
           />
           <ul id="wiki-pages-list" class="wiki-pages-list"></ul>
+          <p id="wiki-search-title" class="wiki-search-title" hidden></p>
+          <ul id="wiki-search-results" class="wiki-search-results"></ul>
         </details>
       </aside>
       <div id="wiki-splitter" class="wiki-splitter" role="separator" aria-orientation="vertical" aria-label="Resize sidebar" hidden></div>
@@ -38,11 +40,24 @@
             <button id="open-wiki-button" class="open-button" type="button">Open wiki folder…</button>
           </div>
           <p class="empty-shortcut">Ctrl+O · Ctrl+Shift+O</p>
+          <section id="recent" class="recent" hidden>
+            <div class="recent-header">
+              <h2>Recent</h2>
+              <button id="recent-clear" class="settings-reset" type="button">Clear</button>
+            </div>
+            <ul id="recent-list" class="recent-list"></ul>
+          </section>
         </div>
         <article id="preview" class="markdown-body" hidden></article>
         <footer id="wiki-footer" class="markdown-body wiki-footer" hidden></footer>
+        <div id="settings-view" class="settings-view" hidden></div>
       </main>
+      <nav id="outline" class="outline" aria-label="Outline" hidden>
+        <p class="outline-title">On this page</p>
+        <ol id="outline-list" class="outline-list"></ol>
+      </nav>
       <div id="link-status" class="link-status" aria-live="polite" aria-hidden="true"></div>
+      <div id="toast" class="toast" role="status" aria-live="polite"></div>
       <div id="link-menu" class="context-menu" role="menu" aria-label="Link" hidden></div>
       <div id="find-bar" class="find-bar" role="search" hidden>
         <input

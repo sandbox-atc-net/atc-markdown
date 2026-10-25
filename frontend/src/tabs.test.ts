@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { activateTab, activeTab, closeTab, emptyTabs, openTab, updateTab, type OpenDocument } from "./tabs";
+import { activateTab, activeTab, closeTab, emptyTabs, openTab, replaceTab, updateTab, type OpenDocument } from "./tabs";
 
 const doc = (path: string): OpenDocument => ({ path, title: path, html: `<p>${path}</p>` });
 
@@ -51,5 +51,25 @@ describe("tabs", () => {
     const state = openTab(emptyTabs, doc("a.md"));
     expect(closeTab(state, 5)).toBe(state);
     expect(activateTab(state, -1)).toBe(state);
+  });
+});
+
+describe("replaceTab", () => {
+  it("puts the document in place of the tab and activates it", () => {
+    const state = openTab(openTab(emptyTabs, doc("a.md")), doc("b.md"));
+    const next = replaceTab(state, 0, doc("c.md"));
+    expect(next.tabs.map((t) => t.path)).toEqual(["c.md", "b.md"]);
+    expect(next.activeIndex).toBe(0);
+  });
+
+  it("activates the existing tab if the document is already open", () => {
+    const state = openTab(openTab(emptyTabs, doc("a.md")), doc("b.md"));
+    const next = replaceTab(state, 1, doc("A.md"));
+    expect(next.tabs.map((t) => t.path)).toEqual(["A.md", "b.md"]);
+    expect(next.activeIndex).toBe(0);
+  });
+
+  it("opens a new tab when there is nothing to replace", () => {
+    expect(replaceTab(emptyTabs, -1, doc("a.md")).tabs).toHaveLength(1);
   });
 });

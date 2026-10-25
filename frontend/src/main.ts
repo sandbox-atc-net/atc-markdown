@@ -2,8 +2,19 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { ask, open as openDialog } from "@tauri-apps/plugin-dialog";
+import { copyText, enhance, enhanceRich } from "./enhance";
+import {
+  applied,
+  needsRerender,
+  stepTextSize,
+  type Settings,
+  type SettingsChanges,
+} from "./settings";
+import { renderSettingsView, type CodeThemeChoice } from "./settings-view";
 import { findMatches } from "./find";
+import { highlightCurrent, outlineItems, renderOutline } from "./outline";
+import { MAX_CLOSED, MAX_RECENT, parseRecent, remember, type RecentEntry } from "./recent";
 import { currentEntry, navigate, startHistory, step, type History } from "./history";
 import { describeLink, type BubbleContent, type IconName, type LinkPreview, type LinkTarget } from "./links";
 import { parseSession, startupState, toSession, type Session, type SessionTab } from "./session";
@@ -13,12 +24,21 @@ import {
   closeTab,
   emptyTabs,
   openTab,
+  replaceTab,
+  SETTINGS_TAB_PATH,
   updateTab,
   type OpenDocument,
   type TabState,
 } from "./tabs";
-import { isInside, type WikiDocument, type WikiInfo, type WikiView } from "./wiki";
-import { markLinks, renderPagesList, renderWikiHeader } from "./wiki-view";
+import { isInside, pageUrl, type WikiDocument, type WikiInfo, type WikiView } from "./wiki";
+import {
+  markLinks,
+  renderPagesList,
+  renderSearchResults,
+  renderWikiHeader,
+  showLastEdit,
+  type SearchHit,
+} from "./wiki-view";
 
 const APP_NAME = "Atc.Markdown";
 const MARKDOWN_EXTENSIONS = ["md", "markdown", "mdown", "mkd"];
@@ -33,6 +53,10 @@ const COMMANDS = [
   "go-forward",
   "toggle-sidebar",
   "find-page",
+  "settings",
+  "toggle-outline",
+  "reopen-tab",
+  "print",
   "reload",
   "find",
   "find-next",
@@ -68,12 +92,23 @@ const wikiPages = element<HTMLDetailsElement>("#wiki-pages");
 const wikiPagesSummary = element<HTMLElement>("#wiki-pages-summary");
 const wikiPagesFilter = element<HTMLInputElement>("#wiki-pages-filter");
 const wikiPagesList = element<HTMLElement>("#wiki-pages-list");
+const wikiSearchTitle = element<HTMLElement>("#wiki-search-title");
+const wikiSearchResults = element<HTMLElement>("#wiki-search-results");
 const wikiSplitter = element<HTMLElement>("#wiki-splitter");
 const wikiHeader = element<HTMLElement>("#wiki-header");
 const wikiFooter = element<HTMLElement>("#wiki-footer");
 const wikiBanner = element<HTMLElement>("#wiki-banner");
+const settingsView = element<HTMLElement>("#settings-view");
+const outline = element<HTMLElement>("#outline");
+const outlineList = element<HTMLElement>("#outline-list");
+const toast = element<HTMLElement>("#toast");
+const recentSection = element<HTMLElement>("#recent");
+const recentList = element<HTMLElement>("#recent-list");
 
 let state: TabState = emptyTabs;
+/** The user's settings; replaced on every `settings-changed` event. */
+let settings: Settings;
+let codeThemes: CodeThemeChoice[] = [];
 /** The tab currently shown, to avoid needless re-renders. */
 let shown: OpenDocument | undefined;
 /** The sidebar currently shown, so its scroll position survives page changes. */
@@ -102,19 +137,27 @@ function render(): void {
 
   const doc = activeTab(state);
   empty.hidden = doc !== undefined;
-  preview.hidden = doc === undefined;
+  preview.hidden = doc === undefined || doc.settings === true;
+  settingsView.hidden = doc?.settings !== true;
 
   if (doc !== shown) {
     // `html` was sanitized in Rust (ammonia) before it reached us.
     preview.innerHTML = doc?.html ?? "";
+    enhance(preview);
+    if (doc?.settings) renderSettings();
     renderWiki(doc);
     renderBanner(doc);
 
     const scroll = pendingScroll?.tab === doc?.path ? pendingScroll : undefined;
     pendingScroll = undefined;
-    content.scrollTop = scroll ? scroll.top : doc ? (scrollPositions.get(doc.path) ?? 0) : 0;
+    const top = scroll ? scroll.top : doc ? (scrollPositions.get(doc.path) ?? 0) : 0;
+    content.scrollTop = top;
     shown = doc;
     if (scroll?.fragment) scrollToId(scroll.fragment);
+    if (doc && !doc.settings) void renderRich(doc, top, scroll?.fragment);
+    updateOutline();
+    if (doc && !doc.settings && !doc.html.includes('class="error"')) rememberRecent(doc);
+    if (!doc) renderRecent();
 
     void getCurrentWindow().setTitle(windowTitle(doc));
     // The old matches pointed into the replaced HTML.
@@ -123,6 +166,58 @@ function render(): void {
     closeLinkMenu();
     linkPreviews.clear();
   }
+}
+
+/** Shows the headings of the active document beside it (when the setting is on). */
+function updateOutline(): void {
+  const doc = activeTab(state);
+  const items = doc && !doc.settings && settings.appearance.showOutline ? outlineItems(preview) : [];
+  outline.hidden = items.length === 0;
+  const onRight = settings.wiki.sidebarPosition !== "right";
+  viewport.classList.toggle("outline-right", !outline.hidden && onRight);
+  viewport.classList.toggle("outline-left", !outline.hidden && !onRight);
+  renderOutline(outlineList, items, (id) => scrollToId(id));
+  highlightCurrent(outlineList, preview, content);
+}
+
+let toastTimer: number | undefined;
+
+/** A short confirmation at the bottom of the window. */
+function showToast(text: string): void {
+  toast.textContent = text;
+  toast.classList.add("visible");
+  window.clearTimeout(toastTimer);
+  toastTimer = window.setTimeout(() => toast.classList.remove("visible"), 1600);
+}
+
+/**
+ * Draws diagrams and math (async, libraries loaded on demand). They change the
+ * page height, so the scroll position is restored once they are in.
+ */
+async function renderRich(doc: OpenDocument, top: number, fragment?: string): Promise<void> {
+  const options = {
+    mermaid: settings.rendering.mermaid,
+    math: settings.rendering.math,
+    dark: document.documentElement.dataset.theme === "dark",
+  };
+  try {
+    const changed = await enhanceRich(preview, options);
+    if (!changed || shown !== doc) return;
+    if (fragment) scrollToId(fragment);
+    else content.scrollTop = top;
+    if (!findBar.hidden) runFind();
+  } catch (error) {
+    reportError(error);
+  }
+}
+
+/** Shows the active tab again from scratch (e.g. diagrams after a theme change). */
+function rerenderShown(): void {
+  if (!shown) return;
+  scrollPositions.set(shown.path, content.scrollTop);
+  shown = undefined;
+  shownSidebar = undefined;
+  render();
 }
 
 function windowTitle(doc: OpenDocument | undefined): string {
@@ -189,6 +284,7 @@ function renderWiki(doc: OpenDocument | undefined): void {
     // Straight to the browser: wiki link resolution would map this URL back to the local page.
     openUrl: (url) => void invoke("follow_link", { documentPath: view.page.path, href: url }).catch(reportError),
   });
+  void showGitLastEdit(view);
 
   if (view.sidebar !== shownSidebar) {
     // Sanitized in Rust.
@@ -198,6 +294,7 @@ function renderWiki(doc: OpenDocument | undefined): void {
   }
   // Without a _Sidebar.md the page list is the navigation, so show it open.
   if (!view.sidebar) wikiPages.open = true;
+  else if (shown?.path !== doc?.path) wikiPages.open = settings.wiki.pageList === "expanded";
   const current = markLinks(wikiSidebarBody, view.sidebar?.missingLinks ?? [], view.page.name);
   current?.scrollIntoView({ block: "nearest" });
   renderPagesList(wikiPagesSummary, wikiPagesList, view, wikiPagesFilter.value, (path) => void goToWikiPage(path));
@@ -205,12 +302,29 @@ function renderWiki(doc: OpenDocument | undefined): void {
   markLinks(preview, view.page.missingLinks);
   wikiFooter.hidden = !view.footer;
   wikiFooter.innerHTML = view.footer?.html ?? "";
+  enhance(wikiFooter);
   if (view.footer) markLinks(wikiFooter, view.footer.missingLinks);
+}
+
+/** Git authors and times per page, so each is only asked once per session. */
+const lastEdits = new Map<string, Promise<{ author: string; timeMs: number } | null>>();
+
+async function showGitLastEdit(view: WikiView): Promise<void> {
+  const path = view.page.path;
+  let edit = lastEdits.get(path);
+  if (!edit) {
+    edit = invoke<{ author: string; timeMs: number } | null>("git_last_edited", { root: view.info.root, path }).catch(
+      () => null,
+    );
+    lastEdits.set(path, edit);
+  }
+  const result = await edit;
+  if (result && shown?.wiki?.page.path === path) showLastEdit(wikiHeader, result);
 }
 
 /** For a file that is a page of a wiki, offers to open the whole wiki. */
 function renderBanner(doc: OpenDocument | undefined): void {
-  const root = doc && !doc.wiki ? doc.wikiRoot : undefined;
+  const root = doc && !doc.wiki && settings.wiki.offerOpenAsWiki ? doc.wikiRoot : undefined;
   wikiBanner.hidden = !root;
   if (!root || !doc) return;
   const name = root.split(/[\\/]/).pop()?.replace(/\.wiki$/i, "") ?? root;
@@ -257,10 +371,24 @@ async function loadPath(path: string): Promise<OpenDocument | undefined> {
   return loadDocument(path, kind.wikiRoot ?? undefined);
 }
 
-async function openPaths(paths: string[]): Promise<void> {
+/**
+ * Opens paths in new tabs. With `fromOs` and the "Replace current tab" setting,
+ * a file opened from Explorer/Finder takes the place of the active document.
+ */
+async function openPaths(paths: string[], fromOs = false): Promise<void> {
   for (const path of paths) {
     const doc = await loadPath(path);
-    if (doc) setState(openTab(state, doc));
+    if (!doc) continue;
+    const active = activeTab(state);
+    const replace =
+      fromOs && settings.files.openFromOs === "replaceCurrent" && active && !active.wiki && !active.settings;
+    if (replace && active.path.toLowerCase() !== doc.path.toLowerCase()) {
+      void invoke("close_document", { path: active.path });
+      scrollPositions.delete(active.path);
+      setState(replaceTab(state, state.activeIndex, doc));
+    } else {
+      setState(openTab(state, doc));
+    }
   }
 }
 
@@ -276,11 +404,17 @@ async function reloadDocument(path: string): Promise<void> {
 function closeDocument(index: number): void {
   const doc = state.tabs[index];
   if (!doc) return;
+  if (!doc.settings) {
+    const entry: SessionTab = doc.wiki
+      ? { kind: "wiki", root: doc.path, page: doc.wiki.page.path }
+      : { kind: "document", path: doc.path };
+    closedTabs = remember(closedTabs.map(withPath), withPath(entry), MAX_CLOSED).map((c) => c.tab);
+  }
   scrollPositions.delete(doc.path);
   if (doc.wiki) {
     const files = [doc.wiki.page.path, doc.wiki.sidebar?.path, doc.wiki.footer?.path].filter(Boolean);
     void invoke("close_wiki", { root: doc.path, files });
-  } else {
+  } else if (!doc.settings) {
     void invoke("close_document", { path: doc.path });
   }
   setState(closeTab(state, index));
@@ -299,7 +433,7 @@ function errorHtml(message: string): string {
 }
 
 async function openPendingPaths(): Promise<void> {
-  await openPaths(await invoke<string[]>("take_pending_paths"));
+  await openPaths(await invoke<string[]>("take_pending_paths"), true);
 }
 
 async function showOpenDialog(): Promise<void> {
@@ -460,35 +594,159 @@ async function reloadActive(): Promise<void> {
 
 /** A file changed on disk: reload every tab that shows it. */
 function onDocumentChanged(path: string): void {
+  if (!settings.files.autoReload) return;
   for (const tab of state.tabs) {
     if (tab.wiki) void refreshWikiFile(tab, path).catch(reportError);
     else if (tab.path.toLowerCase() === path.toLowerCase()) void reloadDocument(path).catch(reportError);
   }
 }
 
-// ---------------------------------------------------------------- sidebar
+// ---------------------------------------------------------------- settings
 
-const SIDEBAR_WIDTH_KEY = "atc-markdown.sidebar-width";
-const SIDEBAR_HIDDEN_KEY = "atc-markdown.sidebar-hidden";
-
-function setSidebarWidth(width: number): void {
-  const clamped = Math.round(Math.min(Math.max(width, 160), window.innerWidth * 0.5));
-  viewport.style.setProperty("--sidebar-width", `${clamped}px`);
+/** Saves a change; the `settings-changed` event then applies it everywhere. */
+function updateSettings(changes: SettingsChanges): void {
+  void invoke<Settings>("update_settings", { changes }).then(onSettingsChanged, reportError);
 }
 
-function toggleSidebar(): void {
-  const hidden = document.body.classList.toggle("sidebar-hidden");
+const systemDark = window.matchMedia("(prefers-color-scheme: dark)");
+const THEME_KEY = "atc-markdown.theme";
+
+/** Applies theme, classes and CSS variables for the current settings. */
+function applySettings(): void {
+  const look = applied(settings, systemDark.matches);
+  const themeChanged = document.documentElement.dataset.theme !== look.theme;
+  document.documentElement.dataset.theme = look.theme;
+  // Diagrams are drawn in the theme's colours.
+  if (themeChanged && preview.querySelector(".mermaid-diagram")) rerenderShown();
+  for (const [name, on] of Object.entries(look.classes)) document.body.classList.toggle(name, on);
+  for (const [name, value] of Object.entries(look.vars)) document.documentElement.style.setProperty(name, value);
+  if (!settings.appearance.readingFont) document.documentElement.style.removeProperty("--font-sans");
+  if (!settings.appearance.codeFont) document.documentElement.style.removeProperty("--font-mono");
   try {
-    localStorage.setItem(SIDEBAR_HIDDEN_KEY, String(hidden));
+    // Remembered so the next start paints in the right colours before settings load.
+    localStorage.setItem(THEME_KEY, look.theme);
   } catch {
-    // Not remembered then.
+    // Only a startup flash then.
   }
+}
+
+/** Uses the last theme straight away, so a dark-mode start doesn't flash white. */
+function applyCachedTheme(): void {
+  try {
+    const theme = localStorage.getItem(THEME_KEY);
+    document.documentElement.dataset.theme = theme === "dark" || theme === "light" ? theme : systemDark.matches ? "dark" : "light";
+  } catch {
+    document.documentElement.dataset.theme = systemDark.matches ? "dark" : "light";
+  }
+}
+
+function onSettingsChanged(next: Settings): void {
+  const before = settings;
+  settings = next;
+  applySettings();
+  if (before.appearance.codeTheme !== next.appearance.codeTheme) void loadHighlightCss().catch(reportError);
+  if (needsRerender(before, next)) void reloadAllTabs().catch(reportError);
+  else if (before.rendering.mermaid !== next.rendering.mermaid) rerenderShown();
+  if (shown?.settings) renderSettings();
+  updateOutline();
+  // Wiki chrome (page list, banner) reads settings while rendering.
+  if (before.wiki.offerOpenAsWiki !== next.wiki.offerOpenAsWiki) renderBanner(shown);
+}
+
+function renderSettings(): void {
+  renderSettingsView(settingsView, settings, codeThemes, {
+    update: updateSettings,
+    reset: (section) => {
+      void invoke<Settings>("default_settings")
+        .then((defaults) => updateSettings({ [section]: defaults[section] } as SettingsChanges))
+        .catch(reportError);
+    },
+    revealFile: () => void invoke("reveal_settings_file").catch(reportError),
+  });
+}
+
+function openSettings(): void {
+  setState(openTab(state, { path: SETTINGS_TAB_PATH, title: "Settings", html: "", settings: true }));
+}
+
+/** Renders every open tab again (after a rendering setting changed). */
+async function reloadAllTabs(): Promise<void> {
+  for (const tab of state.tabs) {
+    if (tab.settings) continue;
+    if (tab.wiki) {
+      const latest = state.tabs.find((t) => t.path === tab.path)?.wiki ?? tab.wiki;
+      const reloaded = await loadWikiTab(tab.path, latest.page.path, latest.history);
+      if (shown?.path === tab.path) pendingScroll = { tab: tab.path, top: content.scrollTop };
+      setState(updateTab(state, reloaded));
+    } else {
+      await reloadDocument(tab.path);
+    }
+  }
+}
+
+/**
+ * Settings used to live in browser storage; move them into settings.json once.
+ */
+function migrateOldSettings(): void {
+  try {
+    const keys = ["atc-markdown.zoom", "atc-markdown.sidebar-width", "atc-markdown.sidebar-hidden"] as const;
+    const [zoom, width, hidden] = keys.map((key) => localStorage.getItem(key));
+    const changes: SettingsChanges = {};
+    if (zoom && Number(zoom) > 0) changes.appearance = { textSize: Math.round(Number(zoom) * 100) };
+    if (width || hidden) {
+      changes.wiki = {};
+      if (width && Number(width) > 0) changes.wiki.sidebarWidth = Math.round(Number(width));
+      if (hidden) changes.wiki.sidebarVisible = hidden !== "true";
+    }
+    if (Object.keys(changes).length > 0) updateSettings(changes);
+    for (const key of keys) localStorage.removeItem(key);
+  } catch {
+    // Nothing to migrate.
+  }
+}
+
+// ---------------------------------------------------------------- sidebar
+
+function toggleSidebar(): void {
+  updateSettings({ wiki: { sidebarVisible: !settings.wiki.sidebarVisible } });
+}
+
+let searchTimer: number | undefined;
+let searchRun = 0;
+
+/** Full-text search across the wiki, a moment after typing stops (3+ characters). */
+function scheduleWikiSearch(): void {
+  window.clearTimeout(searchTimer);
+  const query = wikiPagesFilter.value.trim();
+  const root = shownWikiRoot();
+  if (!root || query.length < 3) {
+    renderSearchResults(wikiSearchTitle, wikiSearchResults, undefined, () => {});
+    return;
+  }
+  searchTimer = window.setTimeout(() => {
+    const run = ++searchRun;
+    void invoke<SearchHit[]>("search_wiki", { root, query })
+      .then((hits) => {
+        if (run !== searchRun) return;
+        renderSearchResults(wikiSearchTitle, wikiSearchResults, hits, (hit) => void openSearchHit(hit, query));
+      })
+      .catch(reportError);
+  }, 250);
+}
+
+/** Opens a search result and highlights the text with Find. */
+async function openSearchHit(hit: SearchHit, query: string): Promise<void> {
+  await goToWikiPage(hit.page.path);
+  findInput.value = query;
+  openFind();
+  scrollToCurrentMatch();
 }
 
 /** Ctrl+P: jump to a page of the active wiki by typing part of its title. */
 function focusPageFilter(): void {
   if (!shown?.wiki) return;
-  document.body.classList.remove("sidebar-hidden");
+  if (!settings.wiki.sidebarVisible) updateSettings({ wiki: { sidebarVisible: true } });
+  document.body.classList.remove("sidebar-hidden", "page-list-hidden");
   wikiPages.open = true;
   wikiPagesFilter.focus();
   wikiPagesFilter.select();
@@ -496,28 +754,22 @@ function focusPageFilter(): void {
 }
 
 function wireSidebar(): void {
-  try {
-    const width = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY));
-    if (width > 0) setSidebarWidth(width);
-    if (localStorage.getItem(SIDEBAR_HIDDEN_KEY) === "true") document.body.classList.add("sidebar-hidden");
-  } catch {
-    // Defaults then.
-  }
-
   wikiSplitter.addEventListener("pointerdown", (e) => {
     e.preventDefault();
     wikiSplitter.setPointerCapture(e.pointerId);
     wikiSplitter.classList.add("dragging");
-    const left = viewport.getBoundingClientRect().left;
-    const move = (m: PointerEvent) => setSidebarWidth(m.clientX - left);
+    const box = viewport.getBoundingClientRect();
+    const onRight = settings.wiki.sidebarPosition === "right";
+    let width = settings.wiki.sidebarWidth;
+    const move = (m: PointerEvent) => {
+      const raw = onRight ? box.right - m.clientX : m.clientX - box.left;
+      width = Math.round(Math.min(Math.max(raw, 160), box.width * 0.5));
+      document.documentElement.style.setProperty("--sidebar-width", `${width}px`);
+    };
     const up = () => {
       wikiSplitter.classList.remove("dragging");
       wikiSplitter.removeEventListener("pointermove", move);
-      try {
-        localStorage.setItem(SIDEBAR_WIDTH_KEY, String(wikiSidebar.getBoundingClientRect().width));
-      } catch {
-        // Not remembered then.
-      }
+      updateSettings({ wiki: { sidebarWidth: width } });
     };
     wikiSplitter.addEventListener("pointermove", move);
     wikiSplitter.addEventListener("pointerup", up, { once: true });
@@ -526,6 +778,7 @@ function wireSidebar(): void {
   wikiPagesFilter.addEventListener("input", () => {
     const view = shown?.wiki;
     if (view) renderPagesList(wikiPagesSummary, wikiPagesList, view, wikiPagesFilter.value, (path) => void goToWikiPage(path));
+    scheduleWikiSearch();
   });
   wikiPagesFilter.addEventListener("keydown", (e) => {
     if (e.key === "Enter") {
@@ -535,6 +788,71 @@ function wireSidebar(): void {
       wikiPagesFilter.dispatchEvent(new Event("input"));
     }
   });
+}
+
+// ---------------------------------------------------------------- recent & closed
+
+const RECENT_KEY = "atc-markdown.recent";
+/** Closed tabs, newest first (this session only). */
+let closedTabs: SessionTab[] = [];
+
+const withPath = (tab: SessionTab) => ({ path: tab.kind === "wiki" ? tab.root : tab.path, tab });
+
+function loadRecent(): RecentEntry[] {
+  try {
+    return parseRecent(localStorage.getItem(RECENT_KEY));
+  } catch {
+    return [];
+  }
+}
+
+function saveRecent(list: RecentEntry[]): void {
+  try {
+    localStorage.setItem(RECENT_KEY, JSON.stringify(list));
+  } catch {
+    // Not remembered then.
+  }
+}
+
+function rememberRecent(doc: OpenDocument): void {
+  const entry: RecentEntry = doc.wiki
+    ? { kind: "wiki", path: doc.path, title: doc.title }
+    : { kind: "document", path: doc.path, title: doc.title };
+  saveRecent(remember(loadRecent(), entry, MAX_RECENT));
+}
+
+/** The "Recent" list on the start page. */
+function renderRecent(): void {
+  const list = loadRecent();
+  recentSection.hidden = list.length === 0;
+  recentList.replaceChildren(
+    ...list.map((entry) => {
+      const item = document.createElement("li");
+      const button = document.createElement("button");
+      button.type = "button";
+      button.title = entry.path;
+      const name = document.createElement("span");
+      name.className = "recent-name";
+      name.textContent = `${entry.kind === "wiki" ? "📚" : "📄"} ${entry.title}`;
+      const where = document.createElement("span");
+      where.className = "recent-path";
+      where.textContent = entry.path;
+      button.append(name, where);
+      button.addEventListener("click", () => void openPaths([entry.path]).catch(reportError));
+      item.append(button);
+      return item;
+    }),
+  );
+}
+
+/** Ctrl+Shift+T: opens the last closed tab again. */
+async function reopenClosedTab(): Promise<void> {
+  const [tab, ...rest] = closedTabs;
+  if (!tab) return;
+  closedTabs = rest;
+  const doc = await restoreTab(tab);
+  if (doc) setState(openTab(state, doc));
+  else showToast("That file is no longer there");
 }
 
 // ---------------------------------------------------------------- session
@@ -576,7 +894,7 @@ async function restoreTab(tab: SessionTab): Promise<OpenDocument | undefined> {
  * with, in one step, so the started-with file always ends up active.
  */
 async function startup(): Promise<void> {
-  const session = loadSession();
+  const session = settings.files.restoreSession ? loadSession() : undefined;
   const pending = await invoke<string[]>("take_pending_paths");
   const [restored, opened] = await Promise.all([
     Promise.all((session?.tabs ?? []).map(restoreTab)),
@@ -604,6 +922,18 @@ async function followHref(href: string): Promise<void> {
   const documentPath = shownPath();
   if (!documentPath) return;
   const wikiRoot = shownWikiRoot();
+  if (settings.links.confirmExternal) {
+    const preview = await describeHref(href);
+    if (preview?.kind === "external" && !/^mailto:/i.test(preview.url)) {
+      const ok = await ask(`Open this address in your browser?\n\n${preview.url}`, {
+        title: "Open web link",
+        kind: "info",
+        okLabel: "Open",
+        cancelLabel: "Cancel",
+      });
+      if (!ok) return;
+    }
+  }
   const target = await invoke<LinkTarget>("follow_link", { documentPath, href, wikiRoot });
   switch (target.kind) {
     case "anchor":
@@ -627,8 +957,28 @@ async function handleLinkClick(e: MouseEvent): Promise<void> {
   if (!link) return;
   e.preventDefault();
   closeLinkMenu();
+  if (link.classList.contains("anchor")) {
+    await copySectionLink(link);
+    return;
+  }
   const href = link.getAttribute("href");
   if (href) await followHref(href);
+}
+
+/**
+ * The "#" next to a heading: jumps there and copies a link to the section —
+ * the github.com address for a wiki page, otherwise a Markdown link.
+ */
+async function copySectionLink(anchor: HTMLAnchorElement): Promise<void> {
+  const id = (anchor.getAttribute("href") ?? "").replace(/^#/, "");
+  if (!id) return;
+  scrollToId(id);
+  const heading = anchor.parentElement?.textContent?.trim() ?? id;
+  const view = shown?.wiki;
+  const url = view ? pageUrl(view.info.url, view.page.name) : undefined;
+  const link = url ? `${url}#${id}` : `[${heading}](#${id})`;
+  await copyText(link);
+  showToast(url ? "Link to section copied" : "Markdown link to section copied");
 }
 
 // ---------------------------------------------------------------- link preview
@@ -711,6 +1061,7 @@ function linkContext(link: HTMLAnchorElement) {
 function showLinkStatus(link: HTMLAnchorElement): void {
   hoveredLink = link;
   window.clearTimeout(linkStatusTimer);
+  if (!settings.links.statusBubble) return;
   const href = link.getAttribute("href");
   if (!href) return;
   linkStatusTimer = window.setTimeout(() => {
@@ -735,19 +1086,6 @@ function hideLinkStatus(): void {
 }
 
 // ---------------------------------------------------------------- link context menu
-
-async function copyText(text: string): Promise<void> {
-  try {
-    await navigator.clipboard.writeText(text);
-  } catch {
-    const area = document.createElement("textarea");
-    area.value = text;
-    document.body.append(area);
-    area.select();
-    document.execCommand("copy");
-    area.remove();
-  }
-}
 
 function menuItem(label: string, action: () => unknown): HTMLButtonElement {
   const button = document.createElement("button");
@@ -833,6 +1171,16 @@ function wireLinks(): void {
       void openLinkMenu(link, e.clientX, e.clientY).catch(reportError);
     });
   }
+  let outlineFrame = 0;
+  content.addEventListener(
+    "scroll",
+    () => {
+      if (outline.hidden) return;
+      cancelAnimationFrame(outlineFrame);
+      outlineFrame = requestAnimationFrame(() => highlightCurrent(outlineList, preview, content));
+    },
+    { passive: true },
+  );
   for (const scroller of [content, wikiSidebar]) {
     scroller.addEventListener(
       "scroll",
@@ -955,34 +1303,22 @@ function handleFindKeys(e: KeyboardEvent): void {
 
 // ---------------------------------------------------------------- zoom
 
-const ZOOM_KEY = "atc-markdown.zoom";
-const ZOOM_STEPS = [0.6, 0.7, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5];
+// Zoom is the "Text size" setting.
 
-function loadZoom(): number {
-  try {
-    const value = Number(localStorage.getItem(ZOOM_KEY));
-    return ZOOM_STEPS.includes(value) ? value : 1;
-  } catch {
-    return 1;
-  }
-}
-
-let zoom = loadZoom();
-
-function setZoom(value: number): void {
-  zoom = value;
-  document.documentElement.style.setProperty("--zoom", String(zoom));
-  try {
-    localStorage.setItem(ZOOM_KEY, String(zoom));
-  } catch {
-    // Storage can be unavailable; zoom then just isn't remembered.
-  }
+function setTextSize(percent: number): void {
+  // Apply at once for a responsive feel; the settings event confirms it.
+  document.documentElement.style.setProperty("--zoom", String(percent / 100));
+  updateSettings({ appearance: { textSize: percent } });
 }
 
 function stepZoom(direction: 1 | -1): void {
-  const index = ZOOM_STEPS.indexOf(zoom);
-  const next = ZOOM_STEPS[Math.min(ZOOM_STEPS.length - 1, Math.max(0, index + direction))];
-  if (next !== undefined) setZoom(next);
+  setTextSize(stepTextSize(settings.appearance.textSize, direction));
+}
+
+/** Print / Save as PDF (the print stylesheet shows just the document, in light colours). */
+function printDocument(): void {
+  if (!shown || shown.settings) return;
+  window.print();
 }
 
 // ---------------------------------------------------------------- commands
@@ -1016,6 +1352,18 @@ function runCommand(command: Command): void {
     case "find-page":
       focusPageFilter();
       break;
+    case "settings":
+      openSettings();
+      break;
+    case "reopen-tab":
+      run(reopenClosedTab());
+      break;
+    case "toggle-outline":
+      updateSettings({ appearance: { showOutline: !settings.appearance.showOutline } });
+      break;
+    case "print":
+      printDocument();
+      break;
     case "reload":
       run(reloadActive());
       break;
@@ -1035,7 +1383,7 @@ function runCommand(command: Command): void {
       stepZoom(-1);
       break;
     case "zoom-reset":
-      setZoom(1);
+      setTextSize(100);
       break;
     case "next-tab":
       stepTab(1);
@@ -1063,10 +1411,16 @@ function commandForKey(e: KeyboardEvent): Command | undefined {
       return e.shiftKey ? "open-wiki" : "open";
     case "w":
       return "close-tab";
+    case "t":
+      return e.shiftKey ? "reopen-tab" : undefined;
     case "b":
       return "toggle-sidebar";
     case "p":
-      return "find-page";
+      return e.shiftKey ? "print" : "find-page";
+    case ",":
+      return "settings";
+    case "l":
+      return e.shiftKey ? "toggle-outline" : undefined;
     case "f":
       return "find";
     case "g":
@@ -1099,10 +1453,15 @@ function handleKeys(e: KeyboardEvent): void {
 
 // ---------------------------------------------------------------- startup
 
+/** Loads (or replaces) the code colours for the chosen code theme. */
 async function loadHighlightCss(): Promise<void> {
-  const style = document.createElement("style");
+  let style = document.querySelector<HTMLStyleElement>("style#highlight-css");
+  if (!style) {
+    style = document.createElement("style");
+    style.id = "highlight-css";
+    document.head.append(style);
+  }
   style.textContent = await invoke<string>("highlight_css");
-  document.head.append(style);
 }
 
 function wireFindBar(): void {
@@ -1117,18 +1476,30 @@ function wireFindBar(): void {
 }
 
 async function main(): Promise<void> {
-  setZoom(zoom);
+  applyCachedTheme();
+  settings = await invoke<Settings>("get_settings");
+  applySettings();
+  migrateOldSettings();
+  systemDark.addEventListener("change", applySettings);
+  codeThemes = await invoke<CodeThemeChoice[]>("code_themes");
+
   document.addEventListener("keydown", handleKeys);
   wireLinks();
   wireSidebar();
   wireFindBar();
   element("#open-button").addEventListener("click", () => runCommand("open"));
   element("#open-wiki-button").addEventListener("click", () => runCommand("open-wiki"));
+  element("#recent-clear").addEventListener("click", () => {
+    saveRecent([]);
+    renderRecent();
+  });
   render();
+  renderRecent();
 
   // After a webview reload, documents from before are no longer shown.
   await invoke("close_all_documents");
   await loadHighlightCss();
+  await listen<Settings>("settings-changed", (event) => onSettingsChanged(event.payload));
 
   await getCurrentWebview().onDragDropEvent((event) => {
     const { payload } = event;
@@ -1159,5 +1530,9 @@ function reportError(error: unknown): void {
 }
 
 window.addEventListener("error", (e) => reportError(e.error ?? e.message));
+// A blocked resource (e.g. by the CSP) is not an "error" event; log it too.
+document.addEventListener("securitypolicyviolation", (e) =>
+  reportError(`CSP blocked ${e.blockedURI || "inline content"} (${e.violatedDirective})`),
+);
 window.addEventListener("unhandledrejection", (e) => reportError(e.reason));
 main().catch(reportError);

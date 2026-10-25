@@ -2,7 +2,7 @@
 // itself comes sanitized from Rust; everything built here uses textContent.
 
 import { canGoBack, canGoForward } from "./history";
-import { filterPages, isSamePage, pageUrl, relativeTime, type WikiView } from "./wiki";
+import { filterPages, isSamePage, pageUrl, relativeTime, type WikiPage, type WikiView } from "./wiki";
 
 export interface WikiHeaderActions {
   back(): void;
@@ -89,6 +89,61 @@ export function renderPagesList(
       button.title = page.title;
       button.classList.toggle("current-page", page.path.toLowerCase() === view.page.path.toLowerCase());
       button.addEventListener("click", () => navigate(page.path));
+      item.append(button);
+      return item;
+    }),
+  );
+}
+
+/** Replaces the file-time "Last edited" with the author and time of the last git commit. */
+export function showLastEdit(header: HTMLElement, edit: { author: string; timeMs: number }): void {
+  const meta = header.querySelector<HTMLElement>(".wiki-meta");
+  if (!meta) return;
+  meta.textContent = `Last edited by ${edit.author}, ${relativeTime(edit.timeMs, Date.now())}`;
+  meta.title = new Date(edit.timeMs).toLocaleString();
+}
+
+/** Mirrors `SearchHit` in `atc-markdown-core`. */
+export interface SearchHit {
+  page: WikiPage;
+  matches: number;
+  snippet: { before: string; hit: string; after: string } | null;
+}
+
+/** Fills the "Found in pages" list of a full-text search. */
+export function renderSearchResults(
+  title: HTMLElement,
+  list: HTMLElement,
+  hits: readonly SearchHit[] | undefined,
+  open: (hit: SearchHit) => void,
+): void {
+  title.hidden = hits === undefined;
+  if (hits === undefined) {
+    list.replaceChildren();
+    return;
+  }
+  title.textContent = hits.length === 0 ? "Not found in any page" : `Found in ${hits.length} page${hits.length === 1 ? "" : "s"}`;
+  list.replaceChildren(
+    ...hits.map((hit) => {
+      const item = document.createElement("li");
+      const button = document.createElement("button");
+      button.type = "button";
+      const name = document.createElement("span");
+      name.className = "wiki-search-page";
+      name.textContent = hit.page.title;
+      const count = document.createElement("span");
+      count.className = "wiki-search-count";
+      count.textContent = hit.matches > 0 ? String(hit.matches) : "";
+      button.append(name, count);
+      if (hit.snippet) {
+        const snippet = document.createElement("span");
+        snippet.className = "wiki-search-snippet";
+        const strong = document.createElement("mark");
+        strong.textContent = hit.snippet.hit;
+        snippet.append(hit.snippet.before, strong, hit.snippet.after);
+        button.append(snippet);
+      }
+      button.addEventListener("click", () => open(hit));
       item.append(button);
       return item;
     }),

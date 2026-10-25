@@ -80,7 +80,10 @@ describe("spoofWarning", () => {
   });
 
   it("warns about punycode hosts", () => {
-    expect(spoofWarning("click", "https://xn--pple-43d.com")).toContain("look-alike");
+    const warning = spoofWarning("click", "https://xn--pple-43d.com");
+    expect(warning).toContain("Look-alike");
+    expect(warning).toContain("аpple.com"); // decoded, with a Cyrillic "а"
+    expect(warning).toContain("xn--pple-43d.com");
   });
 });
 

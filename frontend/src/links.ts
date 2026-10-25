@@ -1,5 +1,6 @@
 // What the link status bubble says. Pure functions, so they can be unit tested.
 
+import { toUnicodeHost } from "./punycode";
 import { isInside, titleFromPath } from "./wiki";
 
 /** Mirrors `LinkTarget` in `atc-markdown-core`. */
@@ -149,7 +150,7 @@ export function spoofWarning(linkText: string, url: string): string | undefined 
     }
   }
   if (host.split(".").some((label) => label.startsWith("xn--"))) {
-    return "The address contains international look-alike characters";
+    return `Look-alike characters: shown as “${toUnicodeHost(host)}”, really ${host}`;
   }
   return undefined;
 }

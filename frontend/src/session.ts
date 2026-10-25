@@ -12,10 +12,12 @@ export interface Session {
 
 export function toSession(state: TabState): Session {
   return {
-    tabs: state.tabs.map((tab) =>
-      tab.wiki ? { kind: "wiki", root: tab.path, page: tab.wiki.page.path } : { kind: "document", path: tab.path },
-    ),
-    active: state.tabs[state.activeIndex]?.path ?? null,
+    tabs: state.tabs
+      .filter((tab) => !tab.settings)
+      .map((tab) =>
+        tab.wiki ? { kind: "wiki", root: tab.path, page: tab.wiki.page.path } : { kind: "document", path: tab.path },
+      ),
+    active: state.tabs[state.activeIndex]?.settings ? null : (state.tabs[state.activeIndex]?.path ?? null),
   };
 }
 

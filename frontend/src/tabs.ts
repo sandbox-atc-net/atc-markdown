@@ -14,6 +14,23 @@ export interface OpenDocument {
   wiki?: WikiView;
   /** Set on document tabs whose file is a page of a wiki. */
   wikiRoot?: string;
+  /** Set on the Settings tab (not saved in the session). */
+  settings?: true;
+}
+
+/** Identity of the Settings tab. */
+export const SETTINGS_TAB_PATH = "atc-markdown:settings";
+
+/**
+ * Puts `doc` in place of the tab at `index` and activates it. If `doc` is
+ * already open in another tab, that tab is activated instead.
+ */
+export function replaceTab(state: TabState, index: number, doc: OpenDocument): TabState {
+  const existing = state.tabs.findIndex((t) => samePath(t.path, doc.path));
+  if (existing >= 0 || index < 0 || index >= state.tabs.length) return openTab(state, doc);
+  const tabs = state.tabs.slice();
+  tabs[index] = doc;
+  return { tabs, activeIndex: index };
 }
 
 export interface TabState {
