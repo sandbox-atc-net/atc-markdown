@@ -19,7 +19,9 @@ use serde::Serialize;
 use crate::document::{DocumentError, read_markdown, strip_verbatim_prefix};
 use crate::links::{LinkTarget, is_markdown_file};
 use crate::paths::{has_scheme, percent_decode, percent_encode_component};
-use crate::render::{LinkRewrite, LinkRewriter, RenderOptions, SanitizedHtml, render_wiki_page};
+use crate::render::{
+    LinkRewrite, LinkRewriter, RenderOptions, Rendered, SanitizedHtml, render_wiki_page,
+};
 
 const SIDEBAR: &str = "_sidebar";
 const FOOTER: &str = "_footer";
@@ -383,6 +385,22 @@ impl Wiki {
             },
             WikiHref::Other => crate::resolve_link(document_path, href),
         }
+    }
+
+    /// Renders unsaved editor text of the page at `path` (for the live preview).
+    pub fn render_text(
+        self: &Arc<Self>,
+        path: &Path,
+        text: &str,
+        options: &RenderOptions,
+    ) -> Rendered {
+        let base_dir = path.parent().unwrap_or(&self.root).to_path_buf();
+        render_wiki_page(
+            text,
+            &base_dir,
+            Arc::clone(self) as Arc<dyn LinkRewriter>,
+            options,
+        )
     }
 
     /// Reads and renders a page, `_Sidebar.md` or `_Footer.md` of this wiki.

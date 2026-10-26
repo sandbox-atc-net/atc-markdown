@@ -76,6 +76,9 @@ pub struct RenderOptions {
     pub emoji: bool,
     /// Mark `$…$` and `$$…$$` as math (rendered by `KaTeX` in the frontend).
     pub math: bool,
+    /// Mark block elements with `data-sourcepos="line:col-line:col"` (for the
+    /// editor's scroll sync). Off for normal viewing.
+    pub source_positions: bool,
 }
 
 impl Default for RenderOptions {
@@ -84,6 +87,7 @@ impl Default for RenderOptions {
             front_matter: FrontMatterStyle::Table,
             emoji: true,
             math: true,
+            source_positions: false,
         }
     }
 }
@@ -135,6 +139,7 @@ fn render_with(
     };
     options.extension.shortcodes = render_options.emoji;
     options.extension.math_dollars = render_options.math;
+    options.render.sourcepos = render_options.source_positions;
     let html = markdown_to_html(source, &options, &plugins, render_options.front_matter);
 
     if base_dir.is_none() && links.is_none() {
@@ -235,7 +240,7 @@ static WIKI_COMRAK_OPTIONS: LazyLock<comrak::Options<'static>> = LazyLock::new(|
 fn base_sanitizer() -> ammonia::Builder<'static> {
     let mut builder = ammonia::Builder::default();
     builder
-        .add_generic_attributes(["id", "class"])
+        .add_generic_attributes(["id", "class", "data-sourcepos"])
         .add_tags(["input", "section"])
         .add_tag_attributes("input", ["type", "checked", "disabled"])
         .add_tag_attributes("th", ["align"])
@@ -391,6 +396,38 @@ mod tests {
     }
 
     #[test]
+    fn source_positions_mark_blocks_including_code() {
+        let source = "# Title
+
+text
+
+```rust
+fn x() {}
+```
+";
+        let with = render_document_with(
+            source,
+            Path::new("."),
+            &RenderOptions {
+                source_positions: true,
+                ..RenderOptions::default()
+            },
+        );
+        let html = with.html.as_str();
+        assert!(
+            html.contains(r#"<h1 id="title" data-sourcepos="1:1-1:7">"#),
+            "{html}"
+        );
+        assert!(html.contains(r#"<p data-sourcepos="3:1-3:4">"#), "{html}");
+        assert!(
+            html.contains(r#"<pre class="syntax-highlighting" data-sourcepos="5:1-7:3">"#),
+            "{html}"
+        );
+        let without = render_document(source, Path::new("."));
+        assert!(!without.html.as_str().contains("data-sourcepos"));
+    }
+
+    #[test]
     fn render_options_change_the_output() {
         let source = "---\ntitle: T\n---\n\n:rocket: $x$";
         let render = |options: RenderOptions| {
@@ -408,6 +445,7 @@ mod tests {
             front_matter: FrontMatterStyle::Hidden,
             emoji: false,
             math: false,
+            source_positions: false,
         });
         assert!(
             !off.contains("front-matter") && !off.contains("title"),

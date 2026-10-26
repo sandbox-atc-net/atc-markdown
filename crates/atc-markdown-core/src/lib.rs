@@ -13,6 +13,7 @@ mod highlight;
 mod links;
 mod paths;
 mod render;
+mod source;
 mod wiki;
 
 pub use args::paths_from_args;
@@ -29,6 +30,10 @@ pub use links::{
 pub use render::{
     FrontMatterStyle, RenderOptions, Rendered, SanitizedHtml, render_document,
     render_document_with, render_markdown,
+};
+pub use source::{
+    LineEnding, SaveError, SaveRequest, SourceFile, canonical_path, detect_line_ending, encode,
+    fingerprint, normalize_line_breaks, read_source, save_source,
 };
 pub use wiki::{
     GitHubRepo, SearchHit, Snippet, Wiki, WikiDocument, WikiHref, WikiInfo, WikiPage,

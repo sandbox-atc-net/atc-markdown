@@ -131,9 +131,14 @@ impl SyntaxHighlighterAdapter for Highlighter {
     fn write_pre_tag(
         &self,
         output: &mut dyn fmt::Write,
-        _attributes: HashMap<&'static str, Cow<'_, str>>,
+        attributes: HashMap<&'static str, Cow<'_, str>>,
     ) -> fmt::Result {
-        comrak::html::write_opening_tag(output, "pre", [("class", "syntax-highlighting")])
+        // Keep the source position (editor scroll sync); drop comrak's other attributes.
+        let mut tag = vec![("class", Cow::Borrowed("syntax-highlighting"))];
+        if let Some(position) = attributes.get("data-sourcepos") {
+            tag.push(("data-sourcepos", position.clone()));
+        }
+        comrak::html::write_opening_tag(output, "pre", tag)
     }
 
     fn write_code_tag(
