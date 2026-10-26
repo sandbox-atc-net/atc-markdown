@@ -2,7 +2,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { ask, open as openDialog } from "@tauri-apps/plugin-dialog";
+import { ask, message, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { commandForKey, isCommand, type Command } from "./commands";
+import { MarkdownEditor } from "./editor";
+import { parseSourcePos, previewScrollFor, type Block } from "./scroll-sync";
 import { copyText, enhance, enhanceRich } from "./enhance";
 import {
   applied,
@@ -10,6 +13,7 @@ import {
   stepTextSize,
   type Settings,
   type SettingsChanges,
+  type ViewMode,
 } from "./settings";
 import { renderSettingsView, type CodeThemeChoice } from "./settings-view";
 import { findMatches } from "./find";
@@ -28,6 +32,8 @@ import {
   SETTINGS_TAB_PATH,
   uniqueTabPath,
   updateTab,
+  UNTITLED_PREFIX,
+  type EditInfo,
   type OpenDocument,
   type TabState,
 } from "./tabs";
@@ -45,32 +51,6 @@ const APP_NAME = "Atc.Markdown";
 const MARKDOWN_EXTENSIONS = ["md", "markdown", "mdown", "mkd"];
 const MARKDOWN_PATTERN = new RegExp(`\\.(${MARKDOWN_EXTENSIONS.join("|")})$`, "i");
 
-/** Things the user can do from the menu or the keyboard. Mirrors `COMMAND_IDS` in `src-tauri/src/menu.rs`. */
-const COMMANDS = [
-  "open",
-  "open-wiki",
-  "close-tab",
-  "go-back",
-  "go-forward",
-  "toggle-sidebar",
-  "find-page",
-  "settings",
-  "toggle-outline",
-  "reopen-tab",
-  "print",
-  "reload",
-  "find",
-  "find-next",
-  "find-previous",
-  "zoom-in",
-  "zoom-out",
-  "zoom-reset",
-  "next-tab",
-  "previous-tab",
-] as const;
-type Command = (typeof COMMANDS)[number];
-
-const isCommand = (value: string): value is Command => (COMMANDS as readonly string[]).includes(value);
 
 /** Mirrors `PathKind` in `src-tauri/src/commands.rs`. */
 type PathKind = { kind: "wiki"; root: string } | { kind: "document"; wikiRoot: string | null };
@@ -100,6 +80,9 @@ const wikiHeader = element<HTMLElement>("#wiki-header");
 const wikiFooter = element<HTMLElement>("#wiki-footer");
 const wikiBanner = element<HTMLElement>("#wiki-banner");
 const settingsView = element<HTMLElement>("#settings-view");
+const docBar = element<HTMLElement>("#doc-bar");
+const editorPane = element<HTMLElement>("#editor-pane");
+const editorSplitter = element<HTMLElement>("#editor-splitter");
 const outline = element<HTMLElement>("#outline");
 const outlineList = element<HTMLElement>("#outline-list");
 const toast = element<HTMLElement>("#toast");
@@ -141,10 +124,23 @@ function render(): void {
   empty.hidden = doc !== undefined;
   preview.hidden = doc === undefined || doc.settings === true;
   settingsView.hidden = doc?.settings !== true;
+  renderEditorLayout(doc);
 
-  if (doc !== shown) {
+  // Typing changes only the edit state (dirty marker); the preview is then updated
+  // by the live render, not from the disk version here.
+  const sameContent =
+    doc !== undefined &&
+    shown !== undefined &&
+    doc.path === shown.path &&
+    doc.html === shown.html &&
+    doc.wiki === shown.wiki &&
+    doc.settings === shown.settings;
+  if (doc !== shown && sameContent) {
+    shown = doc;
+    void getCurrentWindow().setTitle(windowTitle(doc));
+  } else if (doc !== shown) {
     // `html` was sanitized in Rust (ammonia) before it reached us.
-    preview.innerHTML = doc?.html ?? "";
+    preview.innerHTML = (doc && liveHtml.get(doc.path)) ?? doc?.html ?? "";
     enhance(preview);
     if (doc?.settings) renderSettings();
     renderWiki(doc);
@@ -225,18 +221,18 @@ function rerenderShown(): void {
 function windowTitle(doc: OpenDocument | undefined): string {
   if (!doc) return APP_NAME;
   if (doc.wiki) return `${doc.wiki.page.title} – ${doc.wiki.info.name} – ${APP_NAME}`;
-  return `${doc.title} – ${APP_NAME}`;
+  return `${doc.edit?.dirty ? "● " : ""}${doc.title} – ${APP_NAME}`;
 }
 
 function renderTab(doc: OpenDocument, index: number): HTMLElement {
   const tab = document.createElement("div");
-  tab.className = doc.wiki ? "tab wiki" : "tab";
+  tab.className = doc.wiki ? "tab wiki" : doc.edit?.dirty ? "tab dirty" : "tab";
   tab.setAttribute("role", "tab");
   tab.setAttribute("aria-selected", String(index === state.activeIndex));
   tab.title = doc.wiki ? `${doc.wiki.info.name} wiki – ${doc.path}` : doc.path;
   tab.addEventListener("click", () => setState(activateTab(state, index)));
   tab.addEventListener("auxclick", (e) => {
-    if (e.button === 1) closeDocument(index);
+    if (e.button === 1) void closeDocument(index);
   });
 
   const label = document.createElement("span");
@@ -250,7 +246,7 @@ function renderTab(doc: OpenDocument, index: number): HTMLElement {
   close.setAttribute("aria-label", `Close ${doc.title}`);
   close.addEventListener("click", (e) => {
     e.stopPropagation();
-    closeDocument(index);
+    void closeDocument(index);
   });
 
   tab.append(label, close);
@@ -283,6 +279,7 @@ function renderWiki(doc: OpenDocument | undefined): void {
   renderWikiHeader(wikiHeader, view, {
     back: () => runCommand("go-back"),
     forward: () => runCommand("go-forward"),
+    edit: () => void editWikiPage().catch(reportError),
     // Straight to the browser: wiki link resolution would map this URL back to the local page.
     openUrl: (url) => void invoke("follow_link", { documentPath: view.page.path, href: url }).catch(reportError),
   });
@@ -389,14 +386,23 @@ async function openPaths(paths: string[], fromOs = false): Promise<void> {
     if (!doc) continue;
     const active = activeTab(state);
     const replace =
-      fromOs && settings.files.openFromOs === "replaceCurrent" && active && !active.wiki && !active.settings;
+      fromOs &&
+      settings.files.openFromOs === "replaceCurrent" &&
+      active &&
+      !active.wiki &&
+      !active.settings &&
+      !active.edit?.dirty &&
+      !active.edit?.untitled;
+    const alreadyOpen = state.tabs.some((t) => t.path.toLowerCase() === doc.path.toLowerCase());
     if (replace && active.path.toLowerCase() !== doc.path.toLowerCase()) {
       void invoke("close_document", { path: active.path });
       scrollPositions.delete(active.path);
+      forgetEditor(active.path);
       setState(replaceTab(state, state.activeIndex, doc));
     } else {
       setState(openTab(state, doc));
     }
+    if (!alreadyOpen && settings.editor.defaultMode !== "preview") await setMode(settings.editor.defaultMode);
   }
 }
 
@@ -409,9 +415,19 @@ async function reloadDocument(path: string): Promise<void> {
   if (wasShown) content.scrollTop = scroll;
 }
 
-function closeDocument(index: number): void {
+async function closeDocument(index: number): Promise<void> {
+  const asked = state.tabs[index];
+  if (!asked) return;
+  if (!(await confirmDiscard(asked))) return;
+  // The tab list may have changed while the dialog was open.
+  index = state.tabs.findIndex((t) => t.path === asked.path);
   const doc = state.tabs[index];
   if (!doc) return;
+  forgetEditor(doc.path);
+  if (doc.edit?.untitled) {
+    setState(closeTab(state, index));
+    return;
+  }
   if (!doc.settings) {
     const entry: SessionTab = doc.wiki
       ? { kind: "wiki", root: doc.wiki.info.root, page: doc.wiki.page.path }
@@ -623,6 +639,20 @@ async function refreshWikiPages(root: string): Promise<void> {
 async function reloadActive(): Promise<void> {
   const tab = shown;
   if (!tab) return;
+  if (tab.edit && editor.has(tab.path)) {
+    if (tab.edit.untitled) return;
+    if (tab.edit.dirty) {
+      const discard = await ask("Reload from disk? Your unsaved changes will be lost.", {
+        title: "Reload",
+        kind: "warning",
+        okLabel: "Reload",
+        cancelLabel: "Cancel",
+      });
+      if (!discard) return;
+    }
+    await reloadFromDisk(tab.path);
+    return;
+  }
   if (!tab.wiki) {
     await reloadDocument(tab.path);
     return;
@@ -637,8 +667,440 @@ function onDocumentChanged(path: string): void {
   if (!settings.files.autoReload) return;
   for (const tab of state.tabs) {
     if (tab.wiki) void refreshWikiFile(tab, path).catch(reportError);
-    else if (tab.path.toLowerCase() === path.toLowerCase()) void reloadDocument(path).catch(reportError);
+    else if (tab.path.toLowerCase() !== path.toLowerCase()) continue;
+    else if (tab.edit && editor.has(tab.path)) void onEditedFileChanged(tab.path).catch(reportError);
+    else void reloadDocument(path).catch(reportError);
   }
+}
+
+// ---------------------------------------------------------------- editing
+
+/** The editor (one CodeMirror view; each tab has its own text and undo history). */
+let editor: MarkdownEditor;
+/** The text last loaded from or saved to disk, per tab, to know if there are unsaved edits. */
+const savedDocs = new Map<string, ReturnType<MarkdownEditor["doc"]>>();
+/** The latest live preview HTML per tab (newer than the tab's disk HTML while editing). */
+const liveHtml = new Map<string, string>();
+let untitledCount = 0;
+
+/** Mirrors `SourceFile` in `atc-markdown-core`. */
+interface SourceFile {
+  path: string;
+  text: string;
+  lineEnding: "lf" | "crlf";
+  bom: boolean;
+  fingerprint: string;
+}
+
+const modeOf = (doc: OpenDocument | undefined): ViewMode =>
+  doc && !doc.wiki && !doc.settings ? (doc.edit?.mode ?? "preview") : "preview";
+
+function forgetEditor(path: string): void {
+  editor.forget(path);
+  savedDocs.delete(path);
+  liveHtml.delete(path);
+}
+
+function updateEdit(path: string, patch: Partial<EditInfo>): void {
+  const doc = state.tabs.find((t) => t.path === path);
+  if (!doc?.edit) return;
+  setState(updateTab(state, { ...doc, edit: { ...doc.edit, ...patch } }));
+}
+
+/** Shows or hides the editor pane and toolbar for the active tab's mode. */
+function renderEditorLayout(doc: OpenDocument | undefined): void {
+  const mode = modeOf(doc);
+  editorPane.hidden = mode === "preview";
+  editorSplitter.hidden = mode !== "split";
+  content.hidden = mode === "edit";
+  viewport.classList.toggle("mode-edit", mode === "edit");
+  viewport.classList.toggle("mode-split", mode === "split");
+  if (doc && mode !== "preview") editor.show(doc.path);
+  else editor.hide();
+  renderDocBar(doc);
+}
+
+/** The toolbar above a document: view mode, line numbers, save state. */
+function renderDocBar(doc: OpenDocument | undefined): void {
+  docBar.hidden = !doc || Boolean(doc.wiki) || Boolean(doc.settings);
+  if (docBar.hidden || !doc) return;
+  const mode = modeOf(doc);
+
+  const modes = document.createElement("div");
+  modes.className = "modes";
+  modes.setAttribute("role", "group");
+  modes.setAttribute("aria-label", "View");
+  for (const [value, label, title] of [
+    ["preview", "Preview", "Rendered document"],
+    ["split", "Split", "Editor and preview side by side"],
+    ["edit", "Editor", "Markdown source only"],
+  ] as const) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = label;
+    button.title = `${title} (Ctrl+E switches)`;
+    button.setAttribute("aria-pressed", String(mode === value));
+    button.addEventListener("click", () => void setMode(value).catch(reportError));
+    modes.append(button);
+  }
+  const parts: HTMLElement[] = [modes];
+
+  if (mode !== "preview") {
+    const numbersButton = document.createElement("button");
+    numbersButton.type = "button";
+    numbersButton.className = "tool";
+    numbersButton.textContent = "#";
+    numbersButton.title = "Show line numbers (Ctrl+Shift+N)";
+    numbersButton.setAttribute("aria-label", "Show line numbers");
+    numbersButton.setAttribute("aria-pressed", String(settings.editor.lineNumbers));
+    numbersButton.addEventListener("click", () => runCommand("editor-line-numbers"));
+    parts.push(numbersButton);
+  }
+
+  const spacer = document.createElement("span");
+  spacer.className = "spacer";
+  parts.push(spacer);
+
+  const edit = doc.edit;
+  const status = document.createElement("span");
+  status.className = "status";
+  if (edit?.conflict) {
+    status.className = "status conflict";
+    status.textContent = "Changed on disk by another program";
+    const reload = toolButton("Reload", "Load the file from disk; your unsaved changes are lost", () =>
+      void reloadFromDisk(doc.path).catch(reportError),
+    );
+    const keep = toolButton("Keep mine", "Keep your version; saving will ask before overwriting", () =>
+      updateEdit(doc.path, { conflict: undefined }),
+    );
+    parts.push(status, reload, keep);
+  } else if (edit?.untitled) {
+    status.textContent = "New file – not saved yet";
+    parts.push(status, toolButton("Save…", "Save (Ctrl+S)", () => runCommand("save"), true));
+  } else if (edit?.dirty) {
+    status.className = "status dirty";
+    status.textContent = "Unsaved changes";
+    parts.push(status, toolButton("Save", "Save (Ctrl+S)", () => runCommand("save"), true));
+  } else if (edit) {
+    status.textContent = `Saved · ${edit.lineEnding.toUpperCase()}${edit.bom ? " · BOM" : ""}`;
+    parts.push(status);
+  }
+  docBar.replaceChildren(...parts);
+}
+
+function toolButton(label: string, title: string, onClick: () => void, primary = false): HTMLButtonElement {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = primary ? "tool primary" : "tool";
+  button.textContent = label;
+  button.title = title;
+  button.addEventListener("click", onClick);
+  return button;
+}
+
+/** Loads a document's text into the editor the first time it is edited. */
+async function ensureEditor(doc: OpenDocument): Promise<EditInfo | undefined> {
+  if (doc.edit && editor.has(doc.path)) return doc.edit;
+  try {
+    const source = await invoke<SourceFile>("read_source", { path: doc.path });
+    editor.open(doc.path, source.text);
+    savedDocs.set(doc.path, editor.doc(doc.path));
+    return {
+      mode: "preview",
+      dirty: false,
+      lineEnding: source.lineEnding,
+      bom: source.bom,
+      fingerprint: source.fingerprint,
+    };
+  } catch (error) {
+    await message(`This file can't be edited: ${String(error)}`, { title: "Edit", kind: "error" });
+    return undefined;
+  }
+}
+
+/** Preview, Split or Editor for the active document. */
+async function setMode(mode: ViewMode): Promise<void> {
+  const doc = activeTab(state);
+  if (!doc || doc.wiki || doc.settings) return;
+  if (mode === modeOf(doc)) return;
+  const edit = mode === "preview" ? doc.edit : await ensureEditor(doc);
+  if (mode !== "preview" && !edit) return;
+  const latest = state.tabs.find((t) => t.path === doc.path) ?? doc;
+  setState(updateTab(state, { ...latest, edit: edit ? { ...edit, mode } : undefined }));
+  if (mode !== "preview") {
+    if (!liveHtml.has(doc.path)) void liveRender(doc.path).catch(reportError);
+    editor.focus();
+    requestAnimationFrame(syncPreviewToEditor);
+  }
+}
+
+/** Ctrl+E: preview ⇄ editor (the editor mode from settings, Split if that is Preview). */
+async function toggleEdit(): Promise<void> {
+  const doc = activeTab(state);
+  if (doc?.wiki) {
+    await editWikiPage();
+    return;
+  }
+  const preferred = settings.editor.defaultMode === "preview" ? "split" : settings.editor.defaultMode;
+  await setMode(modeOf(doc) === "preview" ? preferred : "preview");
+}
+
+/** "Edit page" in a wiki: the page as a document tab, editor beside the preview. */
+async function editWikiPage(): Promise<void> {
+  const view = shown?.wiki;
+  if (!view) return;
+  const doc = await loadDocument(view.page.path, view.info.root);
+  setState(openTab(state, doc));
+  await setMode("split");
+}
+
+/** Ctrl+N: a new, empty Markdown file in the editor. */
+function newFile(): void {
+  untitledCount += 1;
+  const path = uniqueTabPath(
+    state.tabs.map((t) => t.path),
+    `${UNTITLED_PREFIX}${untitledCount}`,
+  );
+  editor.open(path, "");
+  savedDocs.set(path, editor.doc(path));
+  const windows = navigator.userAgent.includes("Windows");
+  setState(
+    openTab(state, {
+      path,
+      title: `Untitled-${untitledCount}.md`,
+      html: "",
+      edit: {
+        mode: settings.editor.defaultMode === "edit" ? "edit" : "split",
+        dirty: false,
+        untitled: true,
+        lineEnding: windows ? "crlf" : "lf",
+        bom: false,
+        fingerprint: null,
+      },
+    }),
+  );
+  editor.focus();
+}
+
+// --- live preview
+
+let renderTimer: number | undefined;
+let renderRun = 0;
+
+function onEditorChanged(path: string): void {
+  const doc = state.tabs.find((t) => t.path === path);
+  if (!doc?.edit) return;
+  const saved = savedDocs.get(path);
+  const current = editor.doc(path);
+  const dirty = !(saved && current && saved.eq(current));
+  if (dirty !== doc.edit.dirty) updateEdit(path, { dirty });
+  window.clearTimeout(renderTimer);
+  renderTimer = window.setTimeout(() => void liveRender(path).catch(reportError), 150);
+}
+
+/** Renders the editor text into the preview. The latest run wins. */
+async function liveRender(path: string): Promise<void> {
+  const run = ++renderRun;
+  const doc = state.tabs.find((t) => t.path === path);
+  if (!doc) return;
+  const result = await invoke<{ html: string; missingLinks: string[] }>("render_source", {
+    text: editor.text(path),
+    path: doc.edit?.untitled ? null : path,
+    wikiRoot: doc.wikiRoot ?? null,
+  });
+  if (run !== renderRun) return;
+  liveHtml.set(path, result.html);
+  if (shown?.path !== path) return;
+  preview.innerHTML = result.html;
+  enhance(preview);
+  if (doc.wikiRoot) markLinks(preview, result.missingLinks);
+  syncPreviewToEditor();
+  updateOutline();
+  if (!findBar.hidden) runFind();
+  linkPreviews.clear();
+  const rich = await enhanceRich(preview, {
+    mermaid: settings.rendering.mermaid,
+    math: settings.rendering.math,
+    dark: document.documentElement.dataset.theme === "dark",
+  });
+  if (rich && run === renderRun) syncPreviewToEditor();
+}
+
+// --- scroll sync (editor → preview)
+
+function onEditorScrolled(): void {
+  if (modeOf(activeTab(state)) === "split") requestAnimationFrame(syncPreviewToEditor);
+}
+
+/** Scrolls the preview to the part of the document at the top of the editor. */
+function syncPreviewToEditor(): void {
+  if (modeOf(activeTab(state)) !== "split") return;
+  const base = content.getBoundingClientRect().top - content.scrollTop;
+  const blocks: Block[] = [];
+  for (const element of preview.querySelectorAll<HTMLElement>("[data-sourcepos]")) {
+    // Top-level blocks only: nested ones (list items…) are covered by their parent.
+    if (element.parentElement?.closest("[data-sourcepos]")) continue;
+    const lines = parseSourcePos(element.dataset.sourcepos);
+    if (!lines) continue;
+    const rect = (element.closest(".code-block") ?? element).getBoundingClientRect();
+    blocks.push({ startLine: lines[0], endLine: lines[1], top: rect.top - base, height: rect.height });
+  }
+  content.scrollTop = Math.max(0, previewScrollFor(blocks, editor.topLine()) - 8);
+}
+
+function wireEditorSplitter(): void {
+  editorSplitter.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    editorSplitter.setPointerCapture(e.pointerId);
+    editorSplitter.classList.add("dragging");
+    const box = viewport.getBoundingClientRect();
+    const move = (m: PointerEvent) => {
+      const left = editorPane.getBoundingClientRect().left;
+      const width = Math.min(Math.max(m.clientX - left, 240), box.width - 240);
+      viewport.style.setProperty("--editor-width", `${Math.round(width)}px`);
+    };
+    const up = () => {
+      editorSplitter.classList.remove("dragging");
+      editorSplitter.removeEventListener("pointermove", move);
+    };
+    editorSplitter.addEventListener("pointermove", move);
+    editorSplitter.addEventListener("pointerup", up, { once: true });
+  });
+}
+
+// --- saving
+
+/** Ctrl+S / Ctrl+Shift+S on the active document. */
+async function saveActive(saveAs: boolean): Promise<void> {
+  const doc = activeTab(state);
+  if (!doc?.edit) return; // Nothing edited (Ctrl+S is still claimed, so the webview doesn't act on it).
+  await saveTab(doc, saveAs);
+}
+
+/** Saves a tab. Returns false if it was not saved (cancelled or failed). */
+async function saveTab(doc: OpenDocument, saveAs = false, force = false): Promise<boolean> {
+  const edit = doc.edit;
+  if (!edit) return true;
+  const isNew = edit.untitled === true || saveAs;
+  if (!isNew && !edit.dirty && !force) return true;
+
+  let path = doc.path;
+  if (isNew) {
+    const chosen = await saveDialog({
+      title: saveAs ? "Save as" : "Save",
+      defaultPath: edit.untitled ? doc.title : doc.path,
+      filters: [{ name: "Markdown", extensions: MARKDOWN_EXTENSIONS }],
+    });
+    if (!chosen) return false;
+    path = chosen;
+  }
+
+  const request = {
+    text: editor.text(doc.path),
+    lineEnding: edit.lineEnding,
+    bom: edit.bom,
+    expected: isNew ? null : edit.fingerprint,
+    force,
+  };
+  let fingerprint: string;
+  try {
+    fingerprint = await invoke<string>("save_source", { path, request });
+  } catch (error) {
+    const failure = error as { kind?: string; message?: string };
+    if (failure.kind === "changed") {
+      const answer = await message(`“${doc.title}” was changed by another program since you opened it.`, {
+        title: "File changed on disk",
+        kind: "warning",
+        buttons: { yes: "Overwrite", no: "Reload theirs", cancel: "Cancel" },
+      });
+      if (answer === "Overwrite" || answer === "Yes") return saveTab(doc, saveAs, true);
+      if (answer === "Reload theirs" || answer === "No") await reloadFromDisk(doc.path);
+      return false;
+    }
+    const reason = failure.kind === "readOnly" ? "The file is read-only." : (failure.message ?? String(error));
+    await message(`Could not save “${doc.title}”.\n\n${reason}`, { title: "Save", kind: "error" });
+    return false;
+  }
+
+  const oldPath = doc.path;
+  if (path !== oldPath) {
+    // Saved under a new name: the tab now is that file.
+    editor.rename(oldPath, path);
+    savedDocs.delete(oldPath);
+    const html = liveHtml.get(oldPath);
+    liveHtml.delete(oldPath);
+    if (html !== undefined) liveHtml.set(path, html);
+    scrollPositions.delete(oldPath);
+    if (!edit.untitled) void invoke("close_document", { path: oldPath });
+  }
+  savedDocs.set(path, editor.doc(path));
+  const index = state.tabs.findIndex((t) => t.path === oldPath);
+  const latest = state.tabs[index] ?? doc;
+  const saved: OpenDocument = {
+    ...latest,
+    path,
+    title: path.split(/[\\/]/).pop() ?? path,
+    edit: { ...(latest.edit ?? edit), dirty: false, untitled: undefined, conflict: undefined, fingerprint },
+  };
+  const tabs = state.tabs.slice();
+  if (index >= 0) tabs[index] = saved;
+  setState({ ...state, tabs });
+  rememberRecent(saved);
+  showToast(`Saved ${saved.title}`);
+  return true;
+}
+
+/** Loads the file from disk into the editor (keeping the cursor where it can). */
+async function reloadFromDisk(path: string, source?: SourceFile): Promise<void> {
+  const file = source ?? (await invoke<SourceFile>("read_source", { path }));
+  editor.replaceText(path, file.text);
+  savedDocs.set(path, editor.doc(path));
+  updateEdit(path, {
+    dirty: false,
+    conflict: undefined,
+    fingerprint: file.fingerprint,
+    lineEnding: file.lineEnding,
+    bom: file.bom,
+  });
+  await liveRender(path);
+}
+
+/** A file open in the editor changed on disk. */
+async function onEditedFileChanged(path: string): Promise<void> {
+  const doc = state.tabs.find((t) => t.path === path);
+  if (!doc?.edit) return;
+  const file = await invoke<SourceFile>("read_source", { path });
+  // Our own save (or a change that ended up identical).
+  if (file.fingerprint === doc.edit.fingerprint) return;
+  if (doc.edit.dirty) updateEdit(path, { conflict: true });
+  else await reloadFromDisk(path, file);
+}
+
+// --- closing with unsaved changes
+
+/** Asks what to do with unsaved changes. Returns false if the user cancels. */
+async function confirmDiscard(doc: OpenDocument): Promise<boolean> {
+  if (!doc.edit?.dirty && !(doc.edit?.untitled && editor.text(doc.path) !== "")) return true;
+  setState(activateTab(state, state.tabs.findIndex((t) => t.path === doc.path)));
+  const answer = await message(`Do you want to save the changes to “${doc.title}”?`, {
+    title: "Unsaved changes",
+    kind: "warning",
+    buttons: { yes: "Save", no: "Don't save", cancel: "Cancel" },
+  });
+  if (answer === "Save" || answer === "Yes") return saveTab(state.tabs.find((t) => t.path === doc.path) ?? doc);
+  return answer === "Don't save" || answer === "No";
+}
+
+/** Window close (and Exit): ask about every tab with unsaved changes first. */
+async function onCloseRequested(event: { preventDefault(): void }): Promise<void> {
+  const unsaved = state.tabs.filter((t) => t.edit?.dirty || (t.edit?.untitled && editor.text(t.path) !== ""));
+  if (unsaved.length === 0) return;
+  event.preventDefault();
+  for (const doc of unsaved) {
+    const latest = state.tabs.find((t) => t.path === doc.path);
+    if (latest && !(await confirmDiscard(latest))) return;
+  }
+  await getCurrentWindow().destroy();
 }
 
 // ---------------------------------------------------------------- settings
@@ -698,6 +1160,10 @@ function onSettingsChanged(next: Settings): void {
   if (needsRerender(before, next)) void reloadAllTabs().catch(reportError);
   else if (before.rendering.mermaid !== next.rendering.mermaid) rerenderShown();
   if (shown?.settings) renderSettings();
+  if (before.editor.lineNumbers !== next.editor.lineNumbers || before.editor.wrapLines !== next.editor.wrapLines) {
+    editor.setOptions(next.editor);
+    renderDocBar(activeTab(state));
+  }
   updateOutline();
   // Wiki chrome (page list, banner) reads settings while rendering.
   if (before.wiki.offerOpenAsWiki !== next.wiki.offerOpenAsWiki) renderBanner(shown);
@@ -728,6 +1194,8 @@ async function reloadAllTabs(): Promise<void> {
       const reloaded = { ...(await loadWikiTab(latest.info.root, latest.page.path, latest.history)), path: tab.path };
       if (shown?.path === tab.path) pendingScroll = { tab: tab.path, top: content.scrollTop };
       setState(updateTab(state, reloaded));
+    } else if (tab.edit && editor.has(tab.path)) {
+      await liveRender(tab.path);
     } else {
       await reloadDocument(tab.path);
     }
@@ -864,6 +1332,7 @@ function saveRecent(list: RecentEntry[]): void {
 }
 
 function rememberRecent(doc: OpenDocument): void {
+  if (doc.edit?.untitled) return;
   const entry: RecentEntry = doc.wiki
     ? { kind: "wiki", path: doc.path, title: doc.title }
     : { kind: "document", path: doc.path, title: doc.title };
@@ -1405,6 +1874,34 @@ function stepTab(direction: 1 | -1): void {
 function runCommand(command: Command): void {
   const run = (task: Promise<void>) => void task.catch(reportError);
   switch (command) {
+    case "new-file":
+      newFile();
+      break;
+    case "save":
+      run(saveActive(false));
+      break;
+    case "save-as":
+      run(saveActive(true));
+      break;
+    case "exit":
+      // Goes through the window's close check (unsaved changes).
+      run(getCurrentWindow().close());
+      break;
+    case "toggle-edit":
+      run(toggleEdit());
+      break;
+    case "mode-preview":
+      run(setMode("preview"));
+      break;
+    case "mode-split":
+      run(setMode("split"));
+      break;
+    case "mode-edit":
+      run(setMode("edit"));
+      break;
+    case "editor-line-numbers":
+      updateSettings({ editor: { lineNumbers: !settings.editor.lineNumbers } });
+      break;
     case "open":
       run(showOpenDialog());
       break;
@@ -1412,7 +1909,7 @@ function runCommand(command: Command): void {
       run(showOpenWikiDialog());
       break;
     case "close-tab":
-      if (state.activeIndex >= 0) closeDocument(state.activeIndex);
+      if (state.activeIndex >= 0) run(closeDocument(state.activeIndex));
       break;
     case "go-back":
       run(stepWikiHistory(-1));
@@ -1442,7 +1939,8 @@ function runCommand(command: Command): void {
       run(reloadActive());
       break;
     case "find":
-      openFind();
+      if (modeOf(activeTab(state)) === "edit") editor.openSearch();
+      else       openFind();
       break;
     case "find-next":
       stepFind(1);
@@ -1468,58 +1966,18 @@ function runCommand(command: Command): void {
   }
 }
 
-/** Maps a key press to a command. Also claims the browser's own shortcuts (reload, find). */
-function commandForKey(e: KeyboardEvent): Command | undefined {
-  const mod = e.ctrlKey || e.metaKey;
-  const key = e.key.toLowerCase();
-  if (e.key === "F5" || (mod && key === "r")) return "reload";
-  if (e.key === "F3") return e.shiftKey ? "find-previous" : "find-next";
-  if (e.altKey && !mod && e.key === "ArrowLeft") return "go-back";
-  if (e.altKey && !mod && e.key === "ArrowRight") return "go-forward";
-  if (e.key === "BrowserBack") return "go-back";
-  if (e.key === "BrowserForward") return "go-forward";
-  if (!mod) return undefined;
-  if (e.ctrlKey && e.key === "Tab") return e.shiftKey ? "previous-tab" : "next-tab";
-  switch (key) {
-    case "o":
-      return e.shiftKey ? "open-wiki" : "open";
-    case "w":
-      return "close-tab";
-    case "t":
-      return e.shiftKey ? "reopen-tab" : undefined;
-    case "b":
-      return "toggle-sidebar";
-    case "p":
-      return e.shiftKey ? "print" : "find-page";
-    case ",":
-      return "settings";
-    case "l":
-      return e.shiftKey ? "toggle-outline" : undefined;
-    case "f":
-      return "find";
-    case "g":
-      return e.shiftKey ? "find-previous" : "find-next";
-    case "+":
-    case "=":
-      return "zoom-in";
-    case "-":
-      return "zoom-out";
-    case "0":
-      return "zoom-reset";
-    default:
-      return undefined;
-  }
-}
-
 function handleKeys(e: KeyboardEvent): void {
-  const command = commandForKey(e);
+  // The editor already handled it (its own shortcuts call preventDefault).
+  if (e.defaultPrevented) return;
+  const inEditor = e.target instanceof Node && editorPane.contains(e.target);
+  const command = commandForKey(e, inEditor);
   if (command) {
     e.preventDefault();
     runCommand(command);
   } else if ((e.ctrlKey || e.metaKey) && /^[1-9]$/.test(e.key)) {
     e.preventDefault();
     setState(activateTab(state, Number(e.key) - 1));
-  } else if (e.key === "Escape" && !findBar.hidden) {
+  } else if (e.key === "Escape" && !findBar.hidden && !inEditor) {
     e.preventDefault();
     closeFind();
   }
@@ -1556,6 +2014,13 @@ async function main(): Promise<void> {
   migrateOldSettings();
   systemDark.addEventListener("change", applySettings);
   codeThemes = await invoke<CodeThemeChoice[]>("code_themes");
+
+  editor = new MarkdownEditor(editorPane, settings.editor, {
+    changed: onEditorChanged,
+    scrolled: onEditorScrolled,
+  });
+  wireEditorSplitter();
+  await getCurrentWindow().onCloseRequested(onCloseRequested);
 
   document.addEventListener("keydown", handleKeys);
   wireLinks();

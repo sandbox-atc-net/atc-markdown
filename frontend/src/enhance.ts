@@ -102,6 +102,9 @@ export interface RichOptions {
 
 let diagramCounter = 0;
 let mermaidTheme: string | undefined;
+/** Drawn diagrams by theme + source, so live editing only redraws what changed. */
+const diagramCache = new Map<string, string>();
+const MAX_CACHED_DIAGRAMS = 100;
 
 /**
  * Renders Mermaid diagrams and math, loading each library only when the
@@ -133,13 +136,25 @@ async function renderDiagrams(root: HTMLElement, dark: boolean): Promise<boolean
   let changed = false;
   for (const block of blocks) {
     const source = block.querySelector("code")?.textContent ?? "";
+    const key = `${theme}\n${source}`;
     try {
-      diagramCounter += 1;
-      const { svg } = await mermaid.render(`mermaid-${diagramCounter}`, source);
+      let svg = diagramCache.get(key);
+      if (svg === undefined) {
+        diagramCounter += 1;
+        svg = (await mermaid.render(`mermaid-${diagramCounter}`, source)).svg;
+        if (diagramCache.size >= MAX_CACHED_DIAGRAMS) {
+          const oldest = diagramCache.keys().next().value;
+          if (oldest !== undefined) diagramCache.delete(oldest);
+        }
+        diagramCache.set(key, svg);
+      }
       // The user may have switched tabs while it rendered.
       if (!block.isConnected) continue;
       const figure = document.createElement("div");
       figure.className = "mermaid-diagram";
+      // Keep the source position for the editor's scroll sync.
+      const position = block.querySelector<HTMLElement>("pre")?.dataset.sourcepos;
+      if (position) figure.dataset.sourcepos = position;
       figure.innerHTML = svg;
       block.replaceWith(figure);
       changed = true;

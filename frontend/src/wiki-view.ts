@@ -8,6 +8,8 @@ export interface WikiHeaderActions {
   back(): void;
   forward(): void;
   openUrl(url: string): void;
+  /** Opens the page in the editor. */
+  edit(): void;
 }
 
 export function renderWikiHeader(header: HTMLElement, view: WikiView, actions: WikiHeaderActions): void {
@@ -36,6 +38,14 @@ export function renderWikiHeader(header: HTMLElement, view: WikiView, actions: W
     button("→", "Forward (Alt+→)", canGoForward(view.history), actions.forward),
     crumbs,
   );
+
+  const editButton = document.createElement("button");
+  editButton.type = "button";
+  editButton.className = "wiki-edit";
+  editButton.textContent = "✎ Edit";
+  editButton.title = "Edit this page (Ctrl+E)";
+  editButton.addEventListener("click", actions.edit);
+  nav.append(editButton);
 
   const url = pageUrl(view.info.url, view.page.name);
   if (url) {

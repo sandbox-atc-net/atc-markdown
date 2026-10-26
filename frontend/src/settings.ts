@@ -8,6 +8,7 @@ export type PageList = "collapsed" | "expanded" | "hidden";
 export type OpenIn = "newTab" | "replaceCurrent";
 export type CopyButton = "hover" | "always" | "off";
 export type FrontMatterStyle = "table" | "hidden" | "raw";
+export type ViewMode = "preview" | "split" | "edit";
 
 export interface Settings {
   version: number;
@@ -33,6 +34,7 @@ export interface Settings {
   links: { statusBubble: boolean; confirmExternal: boolean; externalMarker: boolean };
   rendering: { frontMatter: FrontMatterStyle; emoji: boolean; mermaid: boolean; math: boolean };
   code: { copyButton: CopyButton; wrapLines: boolean; lineNumbers: boolean };
+  editor: { lineNumbers: boolean; wrapLines: boolean; defaultMode: ViewMode };
 }
 
 /** A partial update, as sent to `update_settings`. */

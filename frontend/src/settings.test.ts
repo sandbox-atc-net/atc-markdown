@@ -17,6 +17,7 @@ export const defaults: Settings = {
   links: { statusBubble: true, confirmExternal: false, externalMarker: true },
   rendering: { frontMatter: "table", emoji: true, mermaid: true, math: true },
   code: { copyButton: "hover", wrapLines: false, lineNumbers: false },
+  editor: { lineNumbers: true, wrapLines: true, defaultMode: "preview" },
 };
 
 describe("applied", () => {

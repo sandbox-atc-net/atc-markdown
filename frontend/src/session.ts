@@ -13,7 +13,7 @@ export interface Session {
 export function toSession(state: TabState): Session {
   return {
     tabs: state.tabs
-      .filter((tab) => !tab.settings)
+      .filter((tab) => !tab.settings && !tab.edit?.untitled)
       .map((tab) =>
         tab.wiki
           ? { kind: "wiki", root: tab.wiki.info.root, page: tab.wiki.page.path }

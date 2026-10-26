@@ -183,6 +183,26 @@ function sections(codeThemes: readonly CodeThemeChoice[]): { id: Section; title:
       ],
     },
     {
+      id: "editor",
+      title: "Editor",
+      fields: [
+        onOff("Show line numbers", "editor", "lineNumbers", "In the editor's left margin. Ctrl+Shift+N or the # button in the editor."),
+        onOff("Wrap long lines", "editor", "wrapLines"),
+        {
+          kind: "select",
+          section: "editor",
+          key: "defaultMode",
+          label: "Open files in",
+          hint: "Ctrl+E switches between preview and editor.",
+          options: [
+            ["preview", "Preview"],
+            ["split", "Editor + preview side by side"],
+            ["edit", "Editor"],
+          ],
+        },
+      ],
+    },
+    {
       id: "code",
       title: "Code blocks",
       fields: [

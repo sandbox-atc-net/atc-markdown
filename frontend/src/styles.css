@@ -256,8 +256,14 @@ body.sidebar-hidden .wiki-sidebar, body.sidebar-hidden .wiki-splitter { display:
 .wiki-nav button:not(:disabled):hover { border-color: var(--accent); }
 .wiki-crumbs { margin-left: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wiki-crumbs b { color: var(--fg); font-weight: 600; }
-.wiki-nav .wiki-github {
+.wiki-nav .wiki-edit {
+  width: auto;
   margin-left: auto;
+  padding: 0 10px;
+  font-size: 12px;
+}
+.wiki-nav .wiki-github {
+  margin-left: 12px;
   color: var(--accent);
   text-decoration: none;
   white-space: nowrap;
@@ -908,3 +914,88 @@ body.sidebar-right .outline { order: 0; border-left: 0; border-right: 1px solid 
 .recent-list button:hover { background: var(--subtle-bg); }
 .recent-name { color: var(--accent); }
 .recent-path { max-width: 100%; color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ------------------------------------------------------------ editor */
+
+.doc-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--subtle-bg);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.doc-bar .modes { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.doc-bar .modes button {
+  padding: 3px 12px;
+  border: 0;
+  border-right: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+}
+.doc-bar .modes button:last-child { border-right: 0; }
+.doc-bar .modes button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+.doc-bar .tool {
+  height: 24px;
+  min-width: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+}
+.doc-bar .tool[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
+.doc-bar .tool:hover { color: var(--fg); }
+.doc-bar .spacer { flex: 1; }
+.doc-bar .status { color: var(--muted); white-space: nowrap; }
+.doc-bar .status.dirty { color: var(--alert-warning); }
+.doc-bar .status.conflict { color: var(--danger); font-weight: 600; }
+.doc-bar .primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+.editor-pane {
+  flex: 0 0 var(--editor-width, 50%);
+  min-width: 0;
+  overflow: hidden;
+  border-right: 1px solid var(--border);
+}
+.viewport.mode-edit .editor-pane { flex: 1 1 auto; border-right: 0; }
+.editor-splitter {
+  width: 5px;
+  margin-left: -3px;
+  flex-shrink: 0;
+  cursor: col-resize;
+  z-index: 1;
+}
+.editor-splitter:hover, .editor-splitter.dragging { background: var(--accent); opacity: 0.5; }
+
+/* Markdown source colours (CodeMirror token classes) */
+.cm-editor .tok-heading { color: var(--accent); font-weight: 600; }
+.cm-editor .tok-strong { font-weight: 600; }
+.cm-editor .tok-emphasis { font-style: italic; }
+.cm-editor .tok-strikethrough { text-decoration: line-through; }
+.cm-editor .tok-link, .cm-editor .tok-url { color: var(--accent); }
+.cm-editor .tok-meta, .cm-editor .tok-punctuation, .cm-editor .tok-processingInstruction { color: var(--muted); }
+.cm-editor .tok-monospace, .cm-editor .tok-literal { color: var(--alert-important); }
+.cm-editor .tok-quote { color: var(--muted); font-style: italic; }
+.cm-editor .tok-keyword { color: var(--alert-important); }
+.cm-editor .tok-string, .cm-editor .tok-string2 { color: var(--alert-tip); }
+.cm-editor .tok-number, .cm-editor .tok-bool, .cm-editor .tok-atom { color: var(--alert-warning); }
+.cm-editor .tok-comment { color: var(--muted); font-style: italic; }
+.cm-editor .tok-typeName, .cm-editor .tok-className { color: var(--alert-warning); }
+.cm-editor .tok-propertyName, .cm-editor .tok-variableName2 { color: var(--accent); }
+.cm-editor .tok-invalid { color: var(--danger); }
+
+/* Unsaved tab: a dot instead of the close button, until pointed at. */
+.tab.dirty .tab-close::before { content: "●"; }
+.tab.dirty .tab-close { font-size: 0; }
+.tab.dirty .tab-close::before { font-size: 11px; }
+.tab.dirty:hover .tab-close { font-size: 15px; }
+.tab.dirty:hover .tab-close::before { content: none; }
+
+@media print { .doc-bar, .editor-pane, .editor-splitter { display: none !important; } }

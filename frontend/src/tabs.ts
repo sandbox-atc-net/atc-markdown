@@ -2,6 +2,21 @@
 
 import type { WikiView } from "./wiki";
 
+/** Editing state of a document tab (the text itself lives in the editor). */
+export interface EditInfo {
+  mode: "preview" | "split" | "edit";
+  /** The text differs from what was last loaded or saved. */
+  dirty: boolean;
+  /** A new file that has never been saved. */
+  untitled?: true;
+  lineEnding: "lf" | "crlf";
+  bom: boolean;
+  /** Fingerprint of the file on disk when it was loaded or last saved. */
+  fingerprint: string | null;
+  /** Another program changed the file while there were unsaved edits. */
+  conflict?: true;
+}
+
 /**
  * An open tab. For a wiki tab, `path` is the wiki folder (the tab's identity),
  * `title` the wiki name and `html` the current page; `wiki` holds the rest.
@@ -16,7 +31,14 @@ export interface OpenDocument {
   wikiRoot?: string;
   /** Set on the Settings tab (not saved in the session). */
   settings?: true;
+  /** Set once a document tab has been opened in the editor. */
+  edit?: EditInfo;
 }
+
+/** Ids of new, unsaved files start with this. */
+export const UNTITLED_PREFIX = "untitled:";
+
+export const isUntitled = (doc: OpenDocument): boolean => doc.edit?.untitled === true;
 
 /** Identity of the Settings tab. */
 export const SETTINGS_TAB_PATH = "atc-markdown:settings";

@@ -9,6 +9,7 @@
   </head>
   <body>
     <nav id="tabs" class="tabs" role="tablist" aria-label="Open documents"></nav>
+    <div id="doc-bar" class="doc-bar" role="toolbar" aria-label="Document" hidden></div>
     <div id="viewport" class="viewport">
       <aside id="wiki-sidebar" class="wiki-sidebar" aria-label="Wiki sidebar" hidden>
         <div id="wiki-sidebar-body" class="markdown-body wiki-sidebar-body"></div>
@@ -29,6 +30,8 @@
         </details>
       </aside>
       <div id="wiki-splitter" class="wiki-splitter" role="separator" aria-orientation="vertical" aria-label="Resize sidebar" hidden></div>
+      <div id="editor-pane" class="editor-pane" hidden></div>
+      <div id="editor-splitter" class="editor-splitter" role="separator" aria-orientation="vertical" aria-label="Resize editor" hidden></div>
       <main id="content" class="content">
         <div id="wiki-banner" class="info-bar" hidden></div>
         <header id="wiki-header" class="wiki-header" hidden></header>
