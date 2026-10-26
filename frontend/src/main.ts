@@ -6,6 +6,7 @@ import { ask, message, open as openDialog, save as saveDialog } from "@tauri-app
 import { commandForKey, isCommand, type Command } from "./commands";
 import { MarkdownEditor, type EditorOptions, type LintIssue } from "./editor";
 import type { FenceLanguage } from "./fence-languages";
+import { confirmFix } from "./fix-preview";
 import { parseSourcePos, previewScrollFor, type Block } from "./scroll-sync";
 import { copyText, enhance, enhanceRich } from "./enhance";
 import {
@@ -1186,8 +1187,34 @@ async function fixTab(tab: string, rules: string[], quiet = false): Promise<void
     ...lintTarget(tab),
     rules: rules.length > 0 ? rules : null,
   });
-  if (fixed !== text) editor.replaceText(tab, fixed);
-  else if (!quiet) showToast("Nothing to fix automatically");
+  if (fixed === text) {
+    if (!quiet) showToast("Nothing to fix automatically");
+    return;
+  }
+  if (!quiet && settings.linting.previewFixes) {
+    const issues = (await lintTab(tab, text)).filter((i) => i.fix && (rules.length === 0 || rules.includes(i.rule)));
+    const apply = await confirmFix({
+      title: rules.length === 1 ? `Fix all ${rules[0]}` : "Fix all lint issues",
+      summary: fixSummary(issues),
+      before: text,
+      after: fixed,
+    });
+    if (!apply) return;
+    // The dialog is modal, but the file can still be reloaded from disk meanwhile.
+    if (editor.text(tab) !== text) {
+      showToast("The text changed – run Fix all again");
+      return;
+    }
+  }
+  editor.replaceText(tab, fixed);
+}
+
+/** "12 issues: MD009 × 8, MD012 × 4" (first pass; a fix can make more fixable). */
+function fixSummary(issues: readonly LintIssue[]): string {
+  const counts = new Map<string, number>();
+  for (const issue of issues) counts.set(issue.rule, (counts.get(issue.rule) ?? 0) + 1);
+  const rules = [...counts].sort((a, b) => b[1] - a[1]).map(([rule, n]) => `${rule} × ${n}`);
+  return `${issues.length} issue${issues.length === 1 ? "" : "s"}${rules.length > 0 ? `: ${rules.join(", ")}` : ""}`;
 }
 
 /** Opens the problems list; shows the editor first if only the preview is visible. */
@@ -2127,9 +2154,12 @@ function runCommand(command: Command): void {
   }
 }
 
+/** True while a dialog of ours (the fix preview) is open: app commands wait. */
+const dialogOpen = (): boolean => document.querySelector("dialog[open]") !== null;
+
 function handleKeys(e: KeyboardEvent): void {
   // The editor already handled it (its own shortcuts call preventDefault).
-  if (e.defaultPrevented) return;
+  if (e.defaultPrevented || dialogOpen()) return;
   const inEditor = e.target instanceof Node && editorPane.contains(e.target);
   const command = commandForKey(e, inEditor);
   if (command) {
@@ -2224,7 +2254,7 @@ async function main(): Promise<void> {
   await listen<string>("document-changed", (event) => onDocumentChanged(event.payload));
   await listen<string>("wiki-changed", (event) => void refreshWikiPages(event.payload).catch(reportError));
   await listen<string>("menu-command", (event) => {
-    if (isCommand(event.payload)) runCommand(event.payload);
+    if (isCommand(event.payload) && !dialogOpen()) runCommand(event.payload);
   });
 
   await startup();

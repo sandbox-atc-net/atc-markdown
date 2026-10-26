@@ -63,6 +63,66 @@ export function textChanges(before: string, after: string, maxEdits = 400): Chan
   return changes;
 }
 
+/** A line of a diff, with its 1-based number in the old and/or new text. */
+export interface DiffLine {
+  kind: "same" | "removed" | "added";
+  text: string;
+  before?: number;
+  after?: number;
+  /** The last line, without a line break after it. */
+  noNewline?: true;
+}
+
+/**
+ * The changed lines from `before` to `after`, grouped in hunks with `context`
+ * unchanged lines around each (hunks closer than that are merged). Line breaks
+ * are left out of `text`. With more than `maxEdits` changed lines, one hunk
+ * replaces everything.
+ */
+export function lineDiff(before: string, after: string, context = 2, maxEdits = 2000): DiffLine[][] {
+  if (before === after) return [];
+  const line = (kind: DiffLine["kind"], raw: string, numbers: Pick<DiffLine, "before" | "after">): DiffLine =>
+    raw.endsWith("\n")
+      ? { kind, text: raw.replace(/\r?\n$/, ""), ...numbers }
+      : { kind, text: raw, ...numbers, noNewline: true };
+  const a = splitLines(before);
+  const b = splitLines(after);
+  const matches = matchLines(a, b, maxEdits) ?? [];
+
+  const ops: DiffLine[] = [];
+  let ai = 0;
+  let bi = 0;
+  const changes = (aEnd: number, bEnd: number) => {
+    for (; ai < aEnd; ai++) ops.push(line("removed", a[ai] ?? "", { before: ai + 1 }));
+    for (; bi < bEnd; bi++) ops.push(line("added", b[bi] ?? "", { after: bi + 1 }));
+  };
+  for (const [x, y] of matches) {
+    changes(x, y);
+    ops.push(line("same", a[x] ?? "", { before: x + 1, after: y + 1 }));
+    ai = x + 1;
+    bi = y + 1;
+  }
+  changes(a.length, b.length);
+
+  // Ranges of ops to show: each change with its context, overlapping ones merged.
+  const hunks: DiffLine[][] = [];
+  let start = -1;
+  let end = -1;
+  ops.forEach((op, i) => {
+    if (op.kind === "same") return;
+    const from = Math.max(0, i - context);
+    if (start >= 0 && from <= end + 1) {
+      end = Math.min(ops.length - 1, i + context);
+      return;
+    }
+    if (start >= 0) hunks.push(ops.slice(start, end + 1));
+    start = from;
+    end = Math.min(ops.length - 1, i + context);
+  });
+  if (start >= 0) hunks.push(ops.slice(start, end + 1));
+  return hunks;
+}
+
 /** Pairs of equal lines (index in `a`, index in `b`) of a shortest edit script, in order. */
 function matchLines(a: readonly string[], b: readonly string[], maxEdits: number): [number, number][] | undefined {
   const n = a.length;

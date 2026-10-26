@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { minimalChange, textChanges, type Change } from "./text-diff";
+import { lineDiff, minimalChange, textChanges, type Change, type DiffLine } from "./text-diff";
 
 /** Applies changes (positions in the original text) back to front. */
 function apply(text: string, changes: readonly Change[]): string {
@@ -62,6 +62,57 @@ describe("textChanges", () => {
       const before = lines(Math.floor(random() * 12)).join("");
       const after = lines(Math.floor(random() * 12)).join("") + (random() < 0.3 ? "tail" : "");
       expect(apply(before, textChanges(before, after))).toBe(after);
+    }
+  });
+});
+
+describe("lineDiff", () => {
+  const show = (hunks: DiffLine[][]) =>
+    hunks.map((h) => h.map((l) => `${{ same: " ", removed: "-", added: "+" }[l.kind]}${l.text}`).join("|"));
+
+  it("groups changes with two lines of context and merges close ones", () => {
+    const before = "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n";
+    const after = "1\n2x\n3\n4\n5\n6\n7\n8\n9\n10\n11x\n12\n";
+    expect(show(lineDiff(before, after))).toEqual([" 1|-2|+2x| 3| 4", " 9| 10|-11|+11x| 12"]);
+    const close = "1\n2x\n3\n4\n5x\n6\n7\n8\n9\n10\n11\n12\n";
+    expect(show(lineDiff(before, close))).toEqual([" 1|-2|+2x| 3| 4|-5|+5x| 6| 7"]);
+  });
+
+  it("numbers lines in the old and new text", () => {
+    const [hunk] = lineDiff("a\nb\nc\n", "a\n\nb\nc\n", 1);
+    expect(hunk).toEqual([
+      { kind: "same", text: "a", before: 1, after: 1 },
+      { kind: "added", text: "", after: 2 },
+      { kind: "same", text: "b", before: 2, after: 3 },
+    ]);
+  });
+
+  it("marks a last line without a line break and keeps CRLF out of the text", () => {
+    const [hunk] = lineDiff("a\r\nend", "a\r\nend\r\n");
+    expect(hunk).toEqual([
+      { kind: "same", text: "a", before: 1, after: 1 },
+      { kind: "removed", text: "end", before: 2, noNewline: true },
+      { kind: "added", text: "end", after: 2 },
+    ]);
+    expect(lineDiff("same\n", "same\n")).toEqual([]);
+  });
+
+  it("rebuilds both texts from the lines (with all context)", () => {
+    let seed = 11;
+    const random = () => {
+      seed = (seed * 1103515245 + 12345) % 2147483648;
+      return seed / 2147483648;
+    };
+    const words = ["a", "b", "", "x y"];
+    const lines = (n: number) => Array.from({ length: n }, () => `${words[Math.floor(random() * words.length)]}\n`);
+    const join = (ls: DiffLine[]) => ls.map((l) => l.text + (l.noNewline ? "" : "\n")).join("");
+    for (let i = 0; i < 200; i++) {
+      const before = lines(Math.floor(random() * 10)).join("");
+      const after = lines(Math.floor(random() * 10)).join("");
+      if (before === after) continue;
+      const all = lineDiff(before, after, 1000).flat();
+      expect(join(all.filter((l) => l.kind !== "added"))).toBe(before);
+      expect(join(all.filter((l) => l.kind !== "removed"))).toBe(after);
     }
   });
 });
