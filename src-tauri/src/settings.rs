@@ -240,6 +240,8 @@ pub struct LintingSettings {
     pub list_indent: u32,
     /// Fix what can be fixed when saving.
     pub fix_on_save: bool,
+    /// Show the changes of "Fix all" before applying them.
+    pub preview_fixes: bool,
     /// Rules turned on or off by the user, by id (`MD033`).
     pub rules: BTreeMap<String, bool>,
 }
@@ -252,6 +254,7 @@ impl Default for LintingSettings {
             line_length: 0,
             list_indent: 2,
             fix_on_save: false,
+            preview_fixes: true,
             rules: BTreeMap::new(),
         }
     }

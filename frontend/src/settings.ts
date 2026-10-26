@@ -43,6 +43,8 @@ export interface Settings {
     /** MD007 spaces per nested list level. */
     listIndent: number;
     fixOnSave: boolean;
+    /** Show the changes of "Fix all" before applying them. */
+    previewFixes: boolean;
     /** Rules turned on/off by the user, by id. */
     rules: Record<string, boolean>;
   };
