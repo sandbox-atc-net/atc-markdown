@@ -345,7 +345,7 @@ Status 2026-10-26: built and unit-tested; editing, live preview, save and reload
   - the gutter also hosts lint markers (Phase 2.1) and stays visible for them when numbers are off
   - separate from the "Line numbers" setting for code blocks in the preview
 - ✅ Live preview: debounced (~150 ms) re-render through core
-- 🚧 Scroll sync between editor and preview (source-position mapping from comrak `sourcepos`) — editor → preview done; preview → editor not yet; not yet checked on screen
+- 🚧 Scroll sync between editor and preview (source-position mapping from comrak `sourcepos`) — both ways: the pane last scrolled, clicked or typed in leads and the other follows (no ping-pong, and re-rendering or switching tabs doesn't drag the editor along); fractional lines so it is smooth inside long blocks. Editor side checked in a headless browser (scroll to line → top line round trip within a pixel); not yet checked on screen
 - ✅ Dirty indicator on tab (●), Save (Ctrl/Cmd+S), Save As, New file
 - 🚧 Unsaved-changes prompt on tab close, window close and app quit — implemented (Save / Don't save / Cancel; File → Exit and macOS quit go through it); not yet checked on screen
 - 🚧 External-change conflict: file changed on disk while dirty → ask reload/keep — clean editor reloads in place (checked); dirty → conflict bar implemented, not yet checked on screen

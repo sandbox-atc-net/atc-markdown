@@ -439,3 +439,6 @@ FodyWeavers.xsd
 # insta pending snapshots
 *.pending-snap
 *.snap.new
+
+# Playwright MCP logs
+/.playwright-mcp/
