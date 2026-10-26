@@ -12,6 +12,7 @@ repository.workspace = true
 ammonia.workspace = true
 comrak.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 syntect.workspace = true
 two-face.workspace = true
 thiserror.workspace = true
@@ -19,7 +20,6 @@ thiserror.workspace = true
 [dev-dependencies]
 insta.workspace = true
 proptest.workspace = true
-serde_json.workspace = true
 
 [lints]
 workspace = true

@@ -11,6 +11,7 @@ mod document;
 mod front_matter;
 mod highlight;
 mod links;
+mod lint;
 mod paths;
 mod render;
 mod source;
@@ -26,6 +27,10 @@ pub use highlight::{
 pub use links::{
     LinkPreview, LinkTarget, MARKDOWN_EXTENSIONS, describe_link, is_markdown_file, preview_target,
     resolve_link,
+};
+pub use lint::{
+    CONFIG_FILE_NAMES, ConfigError, Diagnostic, Issue, LintConfig, RULES, RuleConfig, RuleInfo,
+    TextEdit, Utf16Edit, apply_fixes, find_config_file, fix_all, lint, lint_utf16, rule_info,
 };
 pub use render::{
     FrontMatterStyle, RenderOptions, Rendered, SanitizedHtml, render_document,

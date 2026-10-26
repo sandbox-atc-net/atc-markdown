@@ -237,6 +237,15 @@ static WIKI_COMRAK_OPTIONS: LazyLock<comrak::Options<'static>> = LazyLock::new(|
     options
 });
 
+/// The parser options the preview uses, so the linter sees the same structure.
+pub(crate) fn parse_options(wiki: bool) -> &'static comrak::Options<'static> {
+    if wiki {
+        &WIKI_COMRAK_OPTIONS
+    } else {
+        &COMRAK_OPTIONS
+    }
+}
+
 fn base_sanitizer() -> ammonia::Builder<'static> {
     let mut builder = ammonia::Builder::default();
     builder
