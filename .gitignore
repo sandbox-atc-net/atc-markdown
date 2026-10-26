@@ -427,9 +427,6 @@ FodyWeavers.xsd
 # Official VS Code C# Dev Kit Extension exclusion
 #*.lscache
 
-# Local planning notes
-/plans/
-
 # Rust / Cargo
 /target/
 
