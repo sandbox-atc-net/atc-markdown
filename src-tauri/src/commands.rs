@@ -89,6 +89,75 @@ pub async fn open_document(
     Ok(document)
 }
 
+/// Reads a file's text for the editor (line ending, BOM and a fingerprint included).
+#[tauri::command]
+pub async fn read_source(path: PathBuf) -> Result<atc_markdown_core::SourceFile, String> {
+    atc_markdown_core::read_source(&path).map_err(|error| error.to_string())
+}
+
+/// Saves editor text atomically. Fails with `changed` if another program
+/// changed the file since `request.expected` (unless `request.force`).
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+pub async fn save_source(
+    watcher: State<'_, DocumentWatcher>,
+    path: PathBuf,
+    request: atc_markdown_core::SaveRequest,
+) -> Result<String, atc_markdown_core::SaveError> {
+    let fingerprint = tauri::async_runtime::spawn_blocking({
+        let path = path.clone();
+        move || atc_markdown_core::save_source(&path, &request)
+    })
+    .await
+    .map_err(|error| atc_markdown_core::SaveError::Io(error.to_string()))??;
+    // A file saved under a new name (Save As) is watched from now on.
+    watcher.watch(&atc_markdown_core::canonical_path(&path));
+    tracing::info!(%fingerprint, "saved");
+    Ok(fingerprint)
+}
+
+/// The live preview: renders unsaved editor text, with source positions for
+/// scroll sync. `path` (if saved) resolves relative images; `wiki_root` enables
+/// wiki links.
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+pub async fn render_source(
+    app: AppHandle,
+    settings: State<'_, SettingsStore>,
+    wikis: State<'_, WikiRegistry>,
+    text: String,
+    path: Option<PathBuf>,
+    wiki_root: Option<PathBuf>,
+) -> Result<RenderedSource, String> {
+    let mut options = settings.get().render_options();
+    options.source_positions = true;
+    let base_dir = path
+        .as_deref()
+        .and_then(Path::parent)
+        .map(Path::to_path_buf)
+        .unwrap_or_default();
+    let rendered = match (wiki_root, &path) {
+        (Some(root), Some(path)) => {
+            let wiki = wikis.get(&root).map_err(|error| error.to_string())?;
+            wiki.render_text(path, &text, &options)
+        }
+        _ => atc_markdown_core::render_document_with(&text, &base_dir, &options),
+    };
+    allow_images(&app, &rendered.local_images);
+    Ok(RenderedSource {
+        html: rendered.html,
+        missing_links: rendered.missing_links,
+    })
+}
+
+/// The live preview's HTML.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RenderedSource {
+    html: atc_markdown_core::SanitizedHtml,
+    missing_links: Vec<String>,
+}
+
 /// Called when a tab is closed: stop watching the file.
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)]
@@ -289,6 +358,13 @@ pub fn take_pending_paths(pending: State<'_, PendingPaths>) -> Vec<PathBuf> {
     let paths = pending.take();
     tracing::debug!(?paths, "frontend took pending paths");
     paths
+}
+
+/// Quits the app (after the frontend has dealt with unsaved changes).
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+pub fn exit_app(app: AppHandle) {
+    app.exit(0);
 }
 
 /// Lets the frontend write unexpected errors to the app log.

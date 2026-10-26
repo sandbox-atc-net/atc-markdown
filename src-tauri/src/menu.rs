@@ -3,7 +3,8 @@
 //! so menu items and keyboard shortcuts run the same code.
 
 use tauri::menu::{
-    AboutMetadataBuilder, Menu, MenuBuilder, MenuEvent, MenuItemBuilder, SubmenuBuilder,
+    AboutMetadataBuilder, Menu, MenuBuilder, MenuEvent, MenuItem, MenuItemBuilder, Submenu,
+    SubmenuBuilder,
 };
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 
@@ -23,6 +24,15 @@ pub const COMMAND_IDS: &[&str] = &[
     "toggle-outline",
     "reopen-tab",
     "print",
+    "new-file",
+    "save",
+    "save-as",
+    "toggle-edit",
+    "mode-preview",
+    "mode-split",
+    "mode-edit",
+    "editor-line-numbers",
+    "exit",
     "reload",
     "find",
     "find-next",
@@ -58,15 +68,20 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
         .build();
 
     let mut file = SubmenuBuilder::new(app, "&File")
+        .item(&item("new-file", "&New", &m("N"))?)
         .item(&item("open", "&Open…", &m("O"))?)
         .item(&item("open-wiki", "Open &Wiki Folder…", &m("Shift+O"))?)
+        .separator()
+        .item(&item("save", "&Save", &m("S"))?)
+        .item(&item("save-as", "Save &As…", &m("Shift+S"))?)
         .separator()
         .item(&item("print", "&Print…", &m("Shift+P"))?)
         .separator()
         .item(&item("close-tab", "&Close Tab", &m("W"))?)
         .item(&item("reopen-tab", "&Reopen Closed Tab", &m("Shift+T"))?);
     if !cfg!(target_os = "macos") {
-        file = file.separator().quit_with_text("E&xit");
+        // Not the predefined Quit: Exit must first ask about unsaved changes.
+        file = file.separator().item(&item("exit", "E&xit", "Alt+F4")?);
     }
 
     let mut edit = SubmenuBuilder::new(app, "&Edit");
@@ -85,21 +100,7 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
             .item(&item("settings", "&Settings…", &m(","))?);
     }
 
-    let view = SubmenuBuilder::new(app, "&View")
-        .item(&item("reload", "&Reload", "F5")?)
-        .separator()
-        .item(&item("go-back", "&Back", "Alt+Left")?)
-        .item(&item("go-forward", "&Forward", "Alt+Right")?)
-        .item(&item("toggle-sidebar", "Toggle Wiki &Sidebar", &m("B"))?)
-        .item(&item("find-page", "&Go to Wiki Page…", &m("P"))?)
-        .item(&item("toggle-outline", "&Outline", &m("Shift+L"))?)
-        .separator()
-        .item(&item("zoom-in", "Zoom &In", &m("="))?)
-        .item(&item("zoom-out", "Zoom &Out", &m("-"))?)
-        .item(&item("zoom-reset", "&Actual Size", &m("0"))?)
-        .separator()
-        .item(&item("next-tab", "Ne&xt Tab", "Ctrl+Tab")?)
-        .item(&item("previous-tab", "Pre&vious Tab", "Ctrl+Shift+Tab")?);
+    let view = view_menu(app)?;
 
     let mut menu = MenuBuilder::new(app);
     if cfg!(target_os = "macos") {
@@ -119,10 +120,7 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
             .build()?;
         menu = menu.item(&app_menu);
     }
-    menu = menu
-        .item(&file.build()?)
-        .item(&edit.build()?)
-        .item(&view.build()?);
+    menu = menu.item(&file.build()?).item(&edit.build()?).item(&view);
 
     if cfg!(target_os = "macos") {
         let window = SubmenuBuilder::new(app, "Window")
@@ -140,6 +138,81 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     }
 
     menu.build()
+}
+
+/// View: modes, navigation, zoom and tabs.
+fn view_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Submenu<R>> {
+    SubmenuBuilder::new(app, "&View")
+        .item(&menu_item(app, "mode-preview", "&Preview", "")?)
+        .item(&menu_item(
+            app,
+            "mode-split",
+            "&Split (Editor + Preview)",
+            "",
+        )?)
+        .item(&menu_item(app, "mode-edit", "&Editor", "")?)
+        .item(&menu_item(app, "toggle-edit", "Toggle Editor", &ctrl("E"))?)
+        .item(&menu_item(
+            app,
+            "editor-line-numbers",
+            "Editor &Line Numbers",
+            &ctrl("Shift+N"),
+        )?)
+        .separator()
+        .item(&menu_item(app, "reload", "&Reload", "F5")?)
+        .separator()
+        .item(&menu_item(app, "go-back", "&Back", "Alt+Left")?)
+        .item(&menu_item(app, "go-forward", "&Forward", "Alt+Right")?)
+        .item(&menu_item(
+            app,
+            "toggle-sidebar",
+            "Toggle Wiki &Sidebar",
+            &ctrl("B"),
+        )?)
+        .item(&menu_item(
+            app,
+            "find-page",
+            "&Go to Wiki Page…",
+            &ctrl("P"),
+        )?)
+        .item(&menu_item(
+            app,
+            "toggle-outline",
+            "&Outline",
+            &ctrl("Shift+L"),
+        )?)
+        .separator()
+        .item(&menu_item(app, "zoom-in", "Zoom &In", &ctrl("="))?)
+        .item(&menu_item(app, "zoom-out", "Zoom &Out", &ctrl("-"))?)
+        .item(&menu_item(app, "zoom-reset", "&Actual Size", &ctrl("0"))?)
+        .separator()
+        .item(&menu_item(app, "next-tab", "Ne&xt Tab", "Ctrl+Tab")?)
+        .item(&menu_item(
+            app,
+            "previous-tab",
+            "Pre&vious Tab",
+            "Ctrl+Shift+Tab",
+        )?)
+        .build()
+}
+
+/// A menu item; on Windows the shortcut is shown after a tab character (Win32 convention).
+fn menu_item<R: Runtime>(
+    app: &AppHandle<R>,
+    id: &str,
+    text: &str,
+    shortcut: &str,
+) -> tauri::Result<MenuItem<R>> {
+    let text = if cfg!(windows) && !shortcut.is_empty() {
+        format!("{text}	{shortcut}")
+    } else {
+        text.to_owned()
+    };
+    MenuItemBuilder::with_id(id, text).build(app)
+}
+
+fn ctrl(key: &str) -> String {
+    format!("Ctrl+{key}")
 }
 
 /// Forwards custom menu items to the frontend.

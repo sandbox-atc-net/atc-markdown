@@ -67,6 +67,15 @@ pub enum OpenIn {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub enum ViewMode {
+    #[default]
+    Preview,
+    Split,
+    Edit,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum CopyButton {
     #[default]
     Hover,
@@ -195,6 +204,27 @@ pub struct CodeSettings {
     pub line_numbers: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct EditorSettings {
+    /// Line numbers in the editor's left gutter.
+    pub line_numbers: bool,
+    /// Soft-wrap long lines.
+    pub wrap_lines: bool,
+    /// How a file opens: preview only, or with the editor.
+    pub default_mode: ViewMode,
+}
+
+impl Default for EditorSettings {
+    fn default() -> Self {
+        Self {
+            line_numbers: true,
+            wrap_lines: true,
+            default_mode: ViewMode::Preview,
+        }
+    }
+}
+
 /// All user settings.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -206,6 +236,7 @@ pub struct Settings {
     pub links: LinkSettings,
     pub rendering: RenderingSettings,
     pub code: CodeSettings,
+    pub editor: EditorSettings,
 }
 
 impl Default for Settings {
@@ -218,6 +249,7 @@ impl Default for Settings {
             links: LinkSettings::default(),
             rendering: RenderingSettings::default(),
             code: CodeSettings::default(),
+            editor: EditorSettings::default(),
         }
     }
 }
@@ -271,6 +303,7 @@ impl Settings {
             front_matter: self.rendering.front_matter,
             emoji: self.rendering.emoji,
             math: self.rendering.math,
+            source_positions: false,
         }
     }
 }

@@ -7,6 +7,9 @@
     "core:default",
     "core:window:allow-set-title",
     "dialog:allow-open",
-    "dialog:allow-ask"
+    "dialog:allow-ask",
+    "dialog:allow-message",
+    "dialog:allow-save",
+    "core:window:allow-destroy"
   ]
 }

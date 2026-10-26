@@ -9,7 +9,7 @@ mod settings;
 mod watcher;
 mod wikis;
 
-use tauri::{AppHandle, Manager, RunEvent};
+use tauri::{AppHandle, Emitter, Manager, RunEvent};
 
 use file_open::PendingPaths;
 use settings::SettingsStore;
@@ -48,6 +48,10 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::open_document,
             commands::close_document,
+            commands::read_source,
+            commands::save_source,
+            commands::render_source,
+            commands::exit_app,
             commands::close_all_documents,
             commands::path_kind,
             commands::open_wiki,
@@ -76,13 +80,21 @@ pub fn run() {
 }
 
 fn handle_run_event(app: &AppHandle, event: RunEvent) {
-    // macOS delivers double-clicked files as an event instead of argv.
-    #[cfg(target_os = "macos")]
-    if let RunEvent::Opened { urls } = event {
-        file_open::on_opened_urls(app, &urls);
+    match event {
+        // A quit from the OS (e.g. Cmd+Q on macOS) while the window is open:
+        // let the frontend ask about unsaved changes first; it then calls `exit_app`.
+        // `code` is set when the app itself exits, which must not be stopped.
+        RunEvent::ExitRequested {
+            api, code: None, ..
+        } if app.get_webview_window("main").is_some() => {
+            api.prevent_exit();
+            let _ = app.emit(menu::MENU_COMMAND_EVENT, "exit");
+        }
+        // macOS delivers double-clicked files as an event instead of argv.
+        #[cfg(target_os = "macos")]
+        RunEvent::Opened { urls } => file_open::on_opened_urls(app, &urls),
+        _ => {}
     }
-    #[cfg(not(target_os = "macos"))]
-    let _ = (app, event);
 }
 
 fn focus_main_window(app: &AppHandle) {
