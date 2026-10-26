@@ -785,6 +785,9 @@ function renderDocBar(doc: OpenDocument | undefined): void {
     numbersButton.addEventListener("click", () => runCommand("editor-line-numbers"));
     parts.push(numbersButton);
     if (settings.linting.enabled && editor.has(doc.path)) parts.push(lintButton(editor.lintCount(doc.path)));
+  } else if (settings.linting.enabled && settings.linting.showInViewer && !doc.edit?.untitled) {
+    const count = editor.has(doc.path) ? editor.lintCount(doc.path) : viewerLintCount(doc);
+    if (count !== undefined) parts.push(lintButton(count));
   }
 
   const spacer = document.createElement("span");
@@ -816,6 +819,23 @@ function renderDocBar(doc: OpenDocument | undefined): void {
     parts.push(status);
   }
   docBar.replaceChildren(...parts);
+}
+
+/** Lint issue counts of documents shown in the viewer (a reloaded document is a new object). */
+let viewerLintCounts = new WeakMap<OpenDocument, number | "pending">();
+
+/** The issue count for the viewer badge; starts linting the file the first time. */
+function viewerLintCount(doc: OpenDocument): number | undefined {
+  const known = viewerLintCounts.get(doc);
+  if (known !== undefined) return known === "pending" ? undefined : known;
+  viewerLintCounts.set(doc, "pending");
+  void (async () => {
+    const source = await invoke<SourceFile>("read_source", { path: doc.path });
+    const issues = await lintTab(doc.path, source.text);
+    viewerLintCounts.set(doc, issues.length);
+    if (activeTab(state) === doc) renderDocBar(doc);
+  })().catch(() => viewerLintCounts.delete(doc));
+  return undefined;
 }
 
 /** "⚠ 7": the lint issue count; opens the problems list. */
@@ -1340,7 +1360,12 @@ function onSettingsChanged(next: Settings): void {
     editor.setOptions(editorOptions());
     renderDocBar(activeTab(state));
   }
-  if (JSON.stringify(before.linting) !== JSON.stringify(next.linting)) editor.relint();
+  if (JSON.stringify(before.linting) !== JSON.stringify(next.linting)) {
+    editor.relint();
+    // Viewer badges are counted again with the new rules.
+    viewerLintCounts = new WeakMap();
+    renderDocBar(activeTab(state));
+  }
   updateOutline();
   // Wiki chrome (page list, banner) reads settings while rendering.
   if (before.wiki.offerOpenAsWiki !== next.wiki.offerOpenAsWiki) renderBanner(shown);
