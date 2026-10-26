@@ -98,7 +98,7 @@ Goal: prove the risky platform bits before building features.
 - ⬜ **Spike:** build installers on Windows and macOS and verify all four file-open paths from §2 (double-click from Explorer/Finder) — Windows NSIS install verified by user 2026-10-25; macOS pending
 - ⬜ **Spike:** verify native drag & drop delivers paths on Windows/macOS
 - ✅ **Spike:** verify relative image `![](./img.png)` renders via asset protocol
-- ⬜ Decide: plain TS vs Svelte for frontend
+- ✅ Decide: plain TS vs Svelte for frontend — plain TypeScript (small DOM modules with pure, unit-tested helpers; no framework needed so far)
 
 **Acceptance:** an installed hello-world build on Win11 and macOS receives a double-clicked `.md` path (cold + warm start) and logs it.
 
@@ -227,7 +227,7 @@ Goal: open a local clone of a GitHub wiki (e.g. `D:\Code\atc-net\atc-rest-api-so
 - ✅ Two panels: left = rendered `_Sidebar.md` (independent scroll), right = current page, default `Home.md`
 - ✅ Resizable splitter (width remembered); sidebar collapsible (Ctrl/Cmd+B); falls back to an auto-generated page list if `_Sidebar.md` is missing
 - ✅ "Pages (N)" list at the bottom of the sidebar with a filter box, like GitHub's page list — all `*.md` except `_Sidebar`/`_Footer`, titles from file names (dashes → spaces)
-- 🚧 Page header like GitHub: page title from the file name, "last edited …" from `git log` (falls back to file modified time) — done with file modified time; `git log` author/date not yet
+- ✅ Page header like GitHub: page title from the file name, "last edited by <author>, <when>" from `git log` (falls back to file modified time; see Phase 1.8)
 - ✅ `_Footer.md` rendered under every page
 - ✅ Current page highlighted in the sidebar and scrolled into view
 - ✅ Tab title = wiki name (folder name without `.wiki`); window title = `Page – Wiki – Atc.Markdown`
@@ -250,7 +250,7 @@ Goal: open a local clone of a GitHub wiki (e.g. `D:\Code\atc-net\atc-rest-api-so
 
 **Tests**
 - ✅ Core unit tests for the wiki link resolver (`[[...]]` variants, extensionless links, case-insensitivity, GitHub URL mapping, missing pages, traversal attempts)
-- 🚧 Fixture mini-wiki (`Home.md`, `_Sidebar.md`, `_Footer.md`, `images/`) with snapshot tests of the rendered sidebar and a page — fixture wiki covered by unit tests; no snapshot yet. Also checked: all 653 internal links of the real atc-rest-api-source-generator wiki resolve
+- ✅ Fixture mini-wiki (`Home.md`, `_Sidebar.md`, `_Footer.md`, `images/`) with snapshot tests of the rendered sidebar and a page — `tests/wiki/demo.wiki` with snapshots of the page list, three pages (page links, a missing page, a subfolder page, an alert, code), the sidebar and the footer; image URLs are made machine-independent (`asset:<wiki>/images/logo.svg`). Also checked: all 653 internal links of the real atc-rest-api-source-generator wiki resolve
 - ✅ Manual check against `atc-rest-api-source-generator.wiki` side by side with the github.com wiki
 
 **Acceptance criteria**
@@ -436,10 +436,87 @@ Goal: open pages of an Azure DevOps wiki (project wiki or code wiki) straight fr
 - ⬜ REST client against a recorded/mocked Azure DevOps API (no network in CI): load, save, 412 conflict, auth failure, paging of the page tree
 - ⬜ Manual check against a real test project wiki: two people editing the same page
 
+### Phase 2.3 – Folder mode (Explorer panel like VS Code)
+
+Goal: as a user I open any folder (e.g. `D:\Code\atc-net\atc-markdown`) and get a file/folder panel at the side of the window, like the Explorer in Visual Studio Code, that shows only the Markdown files and the folders that lead to them. Clicking a file opens it in a tab, so I can browse and edit a whole docs folder or repo without File → Open for each file.
+
+```
+┌ Tabs: [README.md] [roadmap.md] [CHANGELOG.md] ─────────────────────────────┐
+│ EXPLORER: ATC-MARKDOWN   ⟳ ⊟ │ roadmap.md                                   │
+│ ▾ docs                       │ ──────────────────────────────────────────── │
+│   ▸ guides                   │ (rendered roadmap.md)                        │
+│     getting-started.md       │                                              │
+│ ▾ plans                      │                                              │
+│     manual-test-checklist.md │                                              │
+│   ▸ roadmap.md            ◀  │                                              │
+│ ▸ tests                      │                                              │
+│   CHANGELOG.md               │                                              │
+│   README.md                  │                                              │
+├──────────────────────────────┴──────────────────────────────────────────────┤
+```
+
+**Opening**
+- ⬜ File → Open Folder… (Ctrl/Cmd+K Ctrl/Cmd+O, as in VS Code); drag a folder onto the window; folder path as command-line argument
+- ⬜ One open folder per window; opening another folder replaces it (File → Close Folder closes the panel); recent folders on the start page next to recent files and wikis
+- ⬜ Opening a folder that is a GitHub wiki (same detection as Phase 1.7) opens wiki mode instead; an info bar offers "Open as folder" for the other way round
+- ⬜ Later (installer): Explorer/Finder context menu "Open folder with Atc.Markdown"
+
+**Tree**
+- ⬜ Shows every `*.md` file (also `*.markdown`) and only those folders that contain a Markdown file somewhere below them; empty folders and folders with only other files are hidden
+- ⬜ Sorted like VS Code: folders first, then files, each alphabetically (case-insensitive, natural order so `2-x` comes before `10-x`)
+- ⬜ Folders expand/collapse with a click or ▸/▾; expanded state remembered per folder; "Collapse all" (⊟) and "Refresh" (⟳) buttons in the panel header
+- ⬜ Single folders in a chain shown compact (`docs/guides/api` on one row), like VS Code's compact folders — setting, on by default
+- ⬜ Skipped: hidden folders (`.git`, `.vs`, …), `node_modules`, `bin`, `obj`, `target` and paths ignored by `.gitignore` (setting); the same rules as View → Lint Folder…
+- ⬜ Large folders: the tree is scanned in Rust in the background and shown as soon as the first level is ready; at most 5,000 files (a note says when the limit is hit)
+
+**Opening files**
+- ⬜ Click opens the file in a *preview tab* (title in italics) that the next click replaces, like VS Code; double-click, editing the file or double-clicking the tab keeps it open as a normal tab. Setting to turn preview tabs off (every click opens a new tab)
+- ⬜ Ctrl/Cmd+click or middle-click opens in a new tab in the background; Enter opens the selected file
+- ⬜ A file that is already open switches to its tab instead of opening it twice
+- ⬜ The file of the active tab is highlighted in the tree, and its folders expand and scroll into view (setting "Reveal active file", on by default)
+- ⬜ Relative links between Markdown files in the folder (`[x](../guides/setup.md)`) open in the same way as a click in the tree
+
+**Panel**
+- ⬜ Panel at the left or right side of the window (setting), resizable splitter (width remembered), toggle with Ctrl/Cmd+B (View → Explorer; in a wiki tab Ctrl/Cmd+B keeps toggling the wiki sidebar); shares the side with the outline panel without overlapping it
+- ⬜ Keyboard: ↑/↓ move, →/← expand/collapse, Enter opens, type letters to jump to a matching name
+- ⬜ Filter box at the top ("Filter files…") narrows the tree to matching file names and keeps their parent folders
+- ⬜ Right-click on a file or folder: Open in New Tab · Reveal in Explorer/Finder · Copy Path · Copy Relative Path · Lint Folder… (later: New File, Rename, Delete)
+- ⬜ Find in folder (Ctrl/Cmd+Shift+F): full-text search across all files in the tree, same search rules and snippets as the wiki search
+
+**Behaviour**
+- ⬜ Folder watcher (`notify`): new, renamed and deleted files and folders update the tree live; a folder appears when its first Markdown file is created and disappears when its last one is removed
+- ⬜ Session restore reopens the folder with its expanded folders, the panel width and the open tabs
+- ⬜ Security: the tree never follows symlinks/junctions outside the opened folder; files are opened through the same path checks and sanitizer as any other document
+
+**Settings** (new "Folder" section in the Settings tab)
+
+| Setting | Options (default first) |
+|---|---|
+| Explorer position | **Left** · Right |
+| Explorer shown when a folder opens | On · Off |
+| Preview tabs (single click replaces) | On · Off |
+| Reveal active file in the tree | On · Off |
+| Compact folders | On · Off |
+| File types shown | `*.md` · `*.md` + `*.markdown` + `*.mdx` |
+| Respect `.gitignore` | On · Off |
+| Extra folders to skip | `node_modules`, `bin`, `obj`, `target` (editable list) |
+
+**Tests**
+- ⬜ Core unit tests for the tree builder: folders without Markdown hidden (also deep chains), sort order, compact folders, skipped folders, `.gitignore`, the file limit, symlinks leaving the folder
+- ⬜ Fixture folder `tests/folder/demo` with snapshot of the built tree; watcher test that adds/removes the only `.md` file in a folder
+- ⬜ Vitest for the tree UI: expand/collapse, keyboard navigation, filter, preview tab replaced by the next click
+- ⬜ Manual check against `D:\Code\atc-net` (many repos, ~1,200 `.md` files): time to first paint of the tree and of the full tree
+
+**Acceptance criteria**
+- Opening `D:\Code\atc-net\atc-markdown` shows the Explorer at the left with `plans/roadmap.md` and the other Markdown files; `src-tauri/src` (no `.md` files) is not listed.
+- Clicking `roadmap.md` shows it in a preview tab; clicking `README.md` replaces it; double-clicking keeps it open.
+- Setting Explorer position to Right moves the panel to the right side at once.
+- Creating `notes/todo.md` in Explorer/Finder makes the `notes` folder appear in the tree within a second.
+
 ### Phase 3 – Later ideas (unprioritized)
 
 - Mermaid diagrams and KaTeX math (libraries bundled locally, output sanitized)
-- Table of contents / outline sidebar; folder/workspace sidebar
+- Table of contents / outline sidebar; folder/workspace sidebar (→ Phase 2.3 Folder mode)
 - Export to HTML/PDF; print
 - Formatting toolbar, paste-image-to-file
 - Session restore, recent files, settings UI
