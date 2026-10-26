@@ -142,17 +142,18 @@ export function spoofWarning(linkText: string, url: string): string | undefined 
   } catch {
     return undefined;
   }
+  const warnings: string[] = [];
   const textHost = DOMAIN_LIKE.exec(linkText.trim())?.[1]?.toLowerCase();
   if (textHost) {
     const real = host.replace(/^www\./, "");
     if (real !== textHost && !real.endsWith(`.${textHost}`)) {
-      return `The text says ${textHost}, but the link goes to ${host}`;
+      warnings.push(`The text says ${textHost}, but the link goes to ${host}`);
     }
   }
   if (host.split(".").some((label) => label.startsWith("xn--"))) {
-    return `Look-alike characters: shown as “${toUnicodeHost(host)}”, really ${host}`;
+    warnings.push(`Look-alike characters: shown as “${toUnicodeHost(host)}”, really ${host}`);
   }
-  return undefined;
+  return warnings.length > 0 ? warnings.join(". ") : undefined;
 }
 
 function decodeSafely(text: string): string {

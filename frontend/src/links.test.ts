@@ -85,6 +85,12 @@ describe("spoofWarning", () => {
     expect(warning).toContain("аpple.com"); // decoded, with a Cyrillic "а"
     expect(warning).toContain("xn--pple-43d.com");
   });
+
+  it("gives both warnings when the text names another site and the host is punycode", () => {
+    const warning = spoofWarning("apple.com", "https://xn--pple-43d.com/login");
+    expect(warning).toContain("The text says apple.com");
+    expect(warning).toContain("Look-alike characters: shown as “аpple.com”");
+  });
 });
 
 describe("helpers", () => {
