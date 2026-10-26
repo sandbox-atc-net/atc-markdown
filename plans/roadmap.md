@@ -388,10 +388,10 @@ Decision: rule names, config format and defaults follow the JS markdownlint (wha
 **Auto-fix (later step)**
 - ✅ Fix engine in core: each fix is a list of text edits (range → replacement); "fix all" re-runs the rules until nothing changes (idempotent); one undo step in the editor per fix / per "Fix all"
 - 🚧 Quick fix on an issue, "Fix all of this rule", "Fix all in file" (Ctrl/Cmd+Shift+., View → Fix All Lint Issues), fix-on-save (off by default; only MD009, MD012, MD019, MD021, MD022, MD023, MD032, MD047 — checked on the corpus not to change the rendering; MD010, MD018, MD027, MD031 can) — built, not yet checked on screen
-- ✅ Fixable: MD003 (atx ↔ closed atx, setext → atx, atx → setext for h1/h2), MD004, MD005, MD007 (not inside quotes), MD009 (keeps a 2-space line break), MD010, MD011, MD012, MD014, MD018, MD019, MD020, MD021, MD022, MD023, MD026, MD027, MD029, MD030 (single-block items only), MD031, MD032, MD034, MD035, MD037, MD038, MD039, MD047
-- ⬜ MD046 fix (indented ↔ fenced code)
-- ✅ Not auto-fixable (need a human): MD001, MD002, MD006, MD013, MD024, MD025, MD028, MD033, MD036, MD040, MD041
-- ⬜ MD040 pick-list of languages (from the fence names the highlighter knows)
+- ✅ Fixable: MD003 (atx ↔ closed atx, setext → atx, atx → setext for h1/h2), MD004, MD005, MD007 (not inside quotes), MD009 (keeps a 2-space line break), MD010, MD011, MD012, MD014, MD018, MD019, MD020, MD021, MD022, MD023, MD026, MD027, MD029, MD030 (single-block items only), MD031, MD032, MD034, MD035, MD037, MD038, MD039, MD040 (see below), MD046 (see below), MD047. Fixes keep the file's line breaks (CRLF stays CRLF)
+- ✅ MD046 fix: indented → fenced (same rendering: unit tests per layout — list, quote, quote in list, blank lines, backtick fences inside — and 200,000 generated documents); not offered for a tab right after the indent or code on a list marker line. Fenced → indented is not offered (it would lose the language and leading/trailing blank lines)
+- ✅ Not auto-fixable (need a human): MD001, MD002, MD006, MD013, MD024, MD025, MD028, MD033, MD036, MD041; MD040 only when the first line tells the language (`#!/bin/bash`, `#!/usr/bin/env python3`, `<?xml`, `<!DOCTYPE html`, `<?php`, `@echo off`)
+- 🚧 MD040 pick-list of languages: the fence names the preview's highlighter knows (≈200, popular first, grammar shown beside each) are completed while typing after an opening fence (Ctrl+Space right after the backticks), and the MD040 issue has a "Language…" button that opens the list — built, not yet checked on screen
 - ⬜ Preview of a "Fix all" as a diff before applying
 
 **Tests**
