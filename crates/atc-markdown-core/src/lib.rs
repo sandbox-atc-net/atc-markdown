@@ -30,8 +30,10 @@ pub use links::{
     resolve_link,
 };
 pub use lint::{
-    CONFIG_FILE_NAMES, ConfigError, Diagnostic, Issue, LintConfig, RULES, RuleConfig, RuleInfo,
-    TextEdit, Utf16Edit, apply_fixes, find_config_file, fix_all, lint, lint_utf16, rule_info,
+    CONFIG_FILE_NAMES, ConfigError, Diagnostic, FileLint, FolderIssue, FolderLint, Issue,
+    LintConfig, MAX_FOLDER_FILES, MAX_ISSUES_PER_RULE, RULES, RuleConfig, RuleCount, RuleInfo,
+    TextEdit, Utf16Edit, apply_fixes, find_config_file, fix_all, lint, lint_folder, lint_utf16,
+    rule_info,
 };
 pub use render::{
     FrontMatterStyle, RenderOptions, Rendered, SanitizedHtml, render_document,
