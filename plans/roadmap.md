@@ -241,7 +241,7 @@ Goal: open a local clone of a GitHub wiki (e.g. `D:\Code\atc-net\atc-rest-api-so
 - ✅ Clicking a page link navigates **within the wiki tab** (no new tab); Ctrl/Cmd+click or middle-click opens it in a new tab
 - ✅ Back/forward history per wiki tab: ◀ ▶ buttons, Alt+←/→, mouse back/forward buttons; scroll position restored on back
 - ✅ Scroll to top on new page; to the anchor when the link has `#section`
-- 🚧 Find page (Ctrl/Cmd+P): quick-open over page titles; full-text search across pages (later) — Ctrl+P focuses the page filter; full-text search not yet
+- ✅ Find page (Ctrl/Cmd+P): the page filter narrows the page list by title; from 3 characters it also searches the text of every page ("Search results" with a snippet; click opens the page with the word highlighted by Find). All words must occur, in any order; `"quoted words"` match as a phrase; pages whose title has all words first
 
 **Behaviour**
 - ✅ Folder watcher: new/renamed/deleted pages update the page list; edits to the current page, `_Sidebar.md` or `_Footer.md` re-render live
