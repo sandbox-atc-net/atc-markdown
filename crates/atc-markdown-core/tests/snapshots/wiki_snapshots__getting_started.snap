@@ -1,0 +1,13 @@
+---
+source: crates/atc-markdown-core/tests/wiki_snapshots.rs
+expression: "render(&wiki, &page(&wiki, \"Getting-Started\"))"
+---
+title: Getting Started
+missing links: []
+local images: 0
+---
+<h1 id="getting-started">Getting started<a href="#getting-started" aria-label="Link to heading 'Getting started'" class="anchor" rel="noopener noreferrer"></a></h1>
+<p>Install the package:</p>
+<pre class="syntax-highlighting"><code class="language-bash"><span class="hl-source hl-shell hl-bash"><span class="hl-meta hl-function-call hl-shell"><span class="hl-variable hl-function hl-shell">dotnet</span></span><span class="hl-meta hl-function-call hl-arguments hl-shell"> add package Atc</span>
+</span></code></pre>
+<p>Back to <a href="Home" rel="noopener noreferrer">Home</a>.</p>

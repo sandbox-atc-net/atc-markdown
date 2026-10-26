@@ -1,0 +1,19 @@
+---
+source: crates/atc-markdown-core/tests/wiki_snapshots.rs
+expression: "render(&wiki, &page(&wiki, \"Home\"))"
+---
+title: Home
+missing links: ["Missing%20Page"]
+local images: 1
+---
+<h1 id="welcome">Welcome<a href="#welcome" aria-label="Link to heading 'Welcome'" class="anchor" rel="noopener noreferrer"></a></h1>
+<p>Start with <a href="Getting-Started" rel="noopener noreferrer">Getting Started</a>, then read <a href="Deep-Guide" rel="noopener noreferrer">the guide</a> or <a href="Missing%20Page" rel="noopener noreferrer">Missing Page</a>.</p>
+<ul>
+<li><a href="Working-with-Overlays#apply" rel="noopener noreferrer">Overlays</a></li>
+<li><a href="https://example.com" rel="noopener noreferrer">External</a></li>
+</ul>
+<p><img src="asset:<wiki>/images/logo.svg" alt="logo"></p>
+<div class="markdown-alert markdown-alert-note">
+<p class="markdown-alert-title">Note</p>
+<p>Wiki pages link by name.</p>
+</div>

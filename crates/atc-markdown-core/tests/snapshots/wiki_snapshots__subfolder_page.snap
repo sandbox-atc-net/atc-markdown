@@ -1,0 +1,9 @@
+---
+source: crates/atc-markdown-core/tests/wiki_snapshots.rs
+expression: "render(&wiki, &page(&wiki, \"Deep-Guide\"))"
+---
+title: Deep Guide
+missing links: []
+local images: 1
+---
+<p>A page in a subfolder, linking to <a href="Home" rel="noopener noreferrer">Home</a> and <img src="asset:<wiki>/images/logo.svg" alt="logo">.</p>

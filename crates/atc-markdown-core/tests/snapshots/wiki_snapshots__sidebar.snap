@@ -1,0 +1,15 @@
+---
+source: crates/atc-markdown-core/tests/wiki_snapshots.rs
+expression: "render(&wiki, wiki.sidebar().expect(\"sidebar\"))"
+---
+title: _Sidebar
+missing links: []
+local images: 0
+---
+<p><strong>Pages</strong></p>
+<ul>
+<li><a href="Home" rel="noopener noreferrer">Home</a></li>
+<li><a href="Getting-Started" rel="noopener noreferrer">Getting Started</a></li>
+<li><a href="Working-with-Overlays" rel="noopener noreferrer">Working with Overlays</a></li>
+<li><a href="Deep-Guide" rel="noopener noreferrer">Deep Guide</a></li>
+</ul>

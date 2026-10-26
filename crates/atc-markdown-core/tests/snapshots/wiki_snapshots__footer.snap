@@ -1,0 +1,9 @@
+---
+source: crates/atc-markdown-core/tests/wiki_snapshots.rs
+expression: "render(&wiki, wiki.footer().expect(\"footer\"))"
+---
+title: _Footer
+missing links: []
+local images: 0
+---
+<p>Footer: see <a href="Home" rel="noopener noreferrer">Home</a>.</p>

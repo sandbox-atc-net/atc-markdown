@@ -1,0 +1,6 @@
+---
+source: crates/atc-markdown-core/tests/wiki_snapshots.rs
+expression: "format!(\"name: {}\\npages: {pages:?}\", info.name)"
+---
+name: demo
+pages: ["Deep Guide", "Getting Started", "Home", "Working with Overlays"]
