@@ -375,7 +375,7 @@ Decision: rule names, config format and defaults follow the JS markdownlint (wha
 **Showing issues**
 - 🚧 Editor (Phase 2): wavy underline on the exact range, icon in the gutter, hover shows rule id + message + "Fix" / "Fix all MDxxx" buttons — built (`@codemirror/lint` 6.9.7, own gutter so markers stay without line numbers); not yet checked on screen. All issues are warnings for now
 - 🚧 Problems panel (Ctrl/Cmd+Shift+M, View → Lint Problems; F8 = next issue): list for the open file, click to jump; count as a "⚠ 7" button in the editor toolbar — built, not yet checked on screen
-- ⬜ Viewer: optional "N lint issues" badge for the open document (off by default — viewing should stay quiet)
+- 🚧 Viewer: optional "⚠ N" badge in the document toolbar while viewing (off by default — viewing should stay quiet; Settings → Linting → Show issues in the viewer); click opens the editor with the problems list; counted again after a reload or a lint settings change. Not for wiki tabs (they have no document toolbar) — built, not yet checked on screen
 - 🚧 Lint a whole folder / wiki (View → Lint Folder…): a report tab with the issue counts per rule (click to filter) and the files with issues (expand to list them; click an issue to open the file in the editor at that line). Same settings and project config files as the editor; files in a wiki folder are linted as wiki pages; hidden folders and `node_modules` skipped; at most 5,000 files and 50 listed issues per rule and file (counts include all). All 1,155 files under `D:\Code\atc-net`: 68,730 issues in 0.6 s (files read and linted in parallel) — built, not yet checked on screen
 
 **Configuration**
@@ -399,7 +399,9 @@ Decision: rule names, config format and defaults follow the JS markdownlint (wha
 - ✅ Per fix: expected output; fix-all twice changes nothing; whitespace-only fixes keep the rendered HTML (unit test + corpus)
 - ✅ Corpus check: all 1,187 `.md` files under `D:\Code\atc-net` (read-only): no panics, fix-all idempotent everywhere, ~0.5 s for all files (slowest 24 ms); the only rendering change from whitespace fixes is MD027 turning `>  [!TIP]` into the alert it was meant to be. Most issues are in generated CodeDoc files (MD034 bare URLs, MD022/MD031 blank lines)
 
-### Phase 2.2 – Azure DevOps wiki pages (open, edit and save directly)
+### Phase 2.2 – Azure DevOps wiki pages (open, edit and save directly) — postponed (future feature)
+
+> **Postponed** (decided 2026-10-26): kept as a future feature; not planned for now. The design below stays as the starting point when it is picked up again.
 
 Goal: open pages of an Azure DevOps wiki (project wiki or code wiki) straight from Azure DevOps, edit several of them in tabs, and save back — no browser, no copy-paste. Never silently overwrite someone else's edit.
 
