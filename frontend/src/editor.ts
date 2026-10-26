@@ -261,8 +261,30 @@ export class MarkdownEditor {
 
   /** The source line at the top of the editor (1-based), for scroll sync. */
   topLine(): number {
-    const block = this.view.lineBlockAtHeight(this.view.scrollDOM.scrollTop);
-    return this.view.state.doc.lineAt(block.from).number;
+    const top = this.view.scrollDOM.scrollTop - this.view.documentPadding.top;
+    const block = this.view.lineBlockAtHeight(top);
+    const fraction = block.height > 0 ? Math.min(1, Math.max(0, (top - block.top) / block.height)) : 0;
+    return this.view.state.doc.lineAt(block.from).number + fraction;
+  }
+
+  /**
+   * Scrolls so that source line `line` (with a fraction) is at the top, for
+   * scroll sync from the preview. Returns the new scroll position.
+   */
+  scrollToLine(line: number): number {
+    const doc = this.view.state.doc;
+    const number = Math.min(Math.max(Math.floor(line), 1), doc.lines);
+    const block = this.view.lineBlockAt(doc.line(number).from);
+    const fraction = line >= 1 ? line - Math.floor(line) : 0;
+    const top = line <= 1 ? 0 : Math.max(0, block.top + block.height * fraction + this.view.documentPadding.top);
+    this.restoring = undefined;
+    this.view.scrollDOM.scrollTop = top;
+    return this.view.scrollDOM.scrollTop;
+  }
+
+  /** The editor's scroll position. */
+  scrollTop(): number {
+    return this.view.scrollDOM.scrollTop;
   }
 
   /** Applies changed settings (line numbers, wrapping, linting) to the shown editor. */

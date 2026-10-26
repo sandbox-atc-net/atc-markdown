@@ -7,7 +7,7 @@ import { commandForKey, isCommand, type Command } from "./commands";
 import { MarkdownEditor, type EditorOptions, type LintIssue } from "./editor";
 import type { FenceLanguage } from "./fence-languages";
 import { confirmFix } from "./fix-preview";
-import { parseSourcePos, previewScrollFor, type Block } from "./scroll-sync";
+import { parseSourcePos, previewScrollFor, sourceLineFor, type Block } from "./scroll-sync";
 import { copyText, enhance, enhanceRich } from "./enhance";
 import {
   applied,
@@ -990,13 +990,35 @@ async function liveRender(path: string): Promise<void> {
 
 // --- scroll sync (editor → preview)
 
-function onEditorScrolled(): void {
-  if (modeOf(activeTab(state)) === "split") requestAnimationFrame(syncPreviewToEditor);
+// Scroll sync in Split mode goes both ways. The pane the user last scrolled,
+// clicked or typed in leads; scroll events of the other pane (ours, or from
+// re-rendering) don't sync back, so the two never chase each other.
+let scrollLeader: "editor" | "preview" = "editor";
+let editorSyncFrame = 0;
+let previewSyncFrame = 0;
+/** Space kept above the synced position in the preview, in px. */
+const PREVIEW_SYNC_MARGIN = 8;
+
+function onUserInput(e: Event): void {
+  if (!(e.target instanceof Node)) return;
+  if (editorPane.contains(e.target)) scrollLeader = "editor";
+  else if (content.contains(e.target)) scrollLeader = "preview";
 }
 
-/** Scrolls the preview to the part of the document at the top of the editor. */
-function syncPreviewToEditor(): void {
-  if (modeOf(activeTab(state)) !== "split") return;
+function onEditorScrolled(): void {
+  if (scrollLeader !== "editor" || modeOf(activeTab(state)) !== "split") return;
+  cancelAnimationFrame(editorSyncFrame);
+  editorSyncFrame = requestAnimationFrame(syncPreviewToEditor);
+}
+
+function onPreviewScrolled(): void {
+  if (scrollLeader !== "preview" || modeOf(activeTab(state)) !== "split") return;
+  cancelAnimationFrame(previewSyncFrame);
+  previewSyncFrame = requestAnimationFrame(syncEditorToPreview);
+}
+
+/** The top-level preview blocks with their source lines and positions. */
+function previewBlocks(): Block[] {
   const base = content.getBoundingClientRect().top - content.scrollTop;
   const blocks: Block[] = [];
   for (const element of preview.querySelectorAll<HTMLElement>("[data-sourcepos]")) {
@@ -1007,7 +1029,20 @@ function syncPreviewToEditor(): void {
     const rect = (element.closest(".code-block") ?? element).getBoundingClientRect();
     blocks.push({ startLine: lines[0], endLine: lines[1], top: rect.top - base, height: rect.height });
   }
-  content.scrollTop = Math.max(0, previewScrollFor(blocks, editor.topLine()) - 8);
+  return blocks;
+}
+
+/** Scrolls the preview to the part of the document at the top of the editor. */
+function syncPreviewToEditor(): void {
+  if (modeOf(activeTab(state)) !== "split") return;
+  content.scrollTop = Math.max(0, previewScrollFor(previewBlocks(), editor.topLine()) - PREVIEW_SYNC_MARGIN);
+}
+
+/** Scrolls the editor to the source of the part of the preview at its top. */
+function syncEditorToPreview(): void {
+  if (modeOf(activeTab(state)) !== "split") return;
+  const top = content.scrollTop === 0 ? 0 : content.scrollTop + PREVIEW_SYNC_MARGIN;
+  editor.scrollToLine(sourceLineFor(previewBlocks(), top));
 }
 
 function wireEditorSplitter(): void {
@@ -1282,6 +1317,8 @@ function renderReport(report: FolderLint): void {
 
 /** Opens a file (or switches to its tab) and puts the editor's cursor on a line. */
 async function openAtLine(path: string, line: number, column: number): Promise<void> {
+  // The editor leads: the preview follows it to the line, not the other way round.
+  scrollLeader = "editor";
   const open = state.tabs.findIndex((t) => !isAppView(t) && t.path.toLowerCase() === path.toLowerCase());
   if (open >= 0) setState(activateTab(state, open));
   else await openPaths([path]);
@@ -1917,6 +1954,10 @@ function wireLinks(): void {
     });
   }
   let outlineFrame = 0;
+  content.addEventListener("scroll", onPreviewScrolled, { passive: true });
+  for (const type of ["wheel", "pointerdown", "keydown", "touchstart"]) {
+    window.addEventListener(type, onUserInput, { capture: true, passive: true });
+  }
   content.addEventListener(
     "scroll",
     () => {
