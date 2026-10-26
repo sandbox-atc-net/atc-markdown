@@ -7,6 +7,7 @@
 //! Tauri commands take owned arguments and `State` by value, hence the
 //! `needless_pass_by_value` allows.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use atc_markdown_core::{Document, LinkPreview, LinkTarget, WikiDocument, WikiInfo};
@@ -241,6 +242,41 @@ pub async fn fix_source(
         &config,
         wiki_root.is_some(),
     ))
+}
+
+/// Lints every Markdown file in a folder (with the same settings and project
+/// config files as the editor), for the lint report.
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+pub async fn lint_folder(
+    settings: State<'_, SettingsStore>,
+    root: PathBuf,
+) -> Result<atc_markdown_core::FolderLint, String> {
+    if !root.is_dir() {
+        return Err(format!("Not a folder: {}", root.display()));
+    }
+    let linting = settings.get().linting;
+    tauri::async_runtime::spawn_blocking(move || {
+        // Files in one folder share their configuration file.
+        let mut by_dir: HashMap<PathBuf, (atc_markdown_core::LintConfig, Option<String>)> =
+            HashMap::new();
+        atc_markdown_core::lint_folder(&root, |file| {
+            let dir = file.parent().map(Path::to_path_buf).unwrap_or_default();
+            by_dir
+                .entry(dir)
+                .or_insert_with(|| {
+                    let (config, config_file, error) = lint_config(&linting, Some(file));
+                    let error = error.map(|e| match config_file {
+                        Some(f) => format!("{}: {e}", f.display()),
+                        None => e,
+                    });
+                    (config, error)
+                })
+                .clone()
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 /// All lint rules, for the settings view.
