@@ -45,6 +45,8 @@ export interface Settings {
     fixOnSave: boolean;
     /** Show the changes of "Fix all" before applying them. */
     previewFixes: boolean;
+    /** Show the number of lint issues while only viewing a document. */
+    showInViewer: boolean;
     /** Rules turned on/off by the user, by id. */
     rules: Record<string, boolean>;
   };

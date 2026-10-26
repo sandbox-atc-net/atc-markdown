@@ -242,6 +242,8 @@ pub struct LintingSettings {
     pub fix_on_save: bool,
     /// Show the changes of "Fix all" before applying them.
     pub preview_fixes: bool,
+    /// Show the number of lint issues while only viewing a document.
+    pub show_in_viewer: bool,
     /// Rules turned on or off by the user, by id (`MD033`).
     pub rules: BTreeMap<String, bool>,
 }
@@ -255,6 +257,7 @@ impl Default for LintingSettings {
             list_indent: 2,
             fix_on_save: false,
             preview_fixes: true,
+            show_in_viewer: false,
             rules: BTreeMap::new(),
         }
     }

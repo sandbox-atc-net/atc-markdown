@@ -262,6 +262,7 @@ function sections(
         },
         onOff("Fix issues when saving", "linting", "fixOnSave", "Only issues that can be fixed safely, like trailing spaces."),
         onOff("Preview fixes", "linting", "previewFixes", "Show what “Fix all” changes before applying it."),
+        onOff("Show issues in the viewer", "linting", "showInViewer", "The number of lint issues in the toolbar, also when only viewing."),
         ...ruleFields(lintRules),
       ],
     },
