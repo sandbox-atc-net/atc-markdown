@@ -1,6 +1,7 @@
 // The Markdown editor (CodeMirror 6). One EditorView is shared; each tab has
 // its own EditorState (text, selection, undo history), swapped in on show.
 
+import { autocompletion, startCompletion, type Completion } from "@codemirror/autocomplete";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { bracketMatching, indentOnInput, syntaxHighlighting } from "@codemirror/language";
@@ -28,6 +29,7 @@ import {
   rectangularSelection,
 } from "@codemirror/view";
 import { classHighlighter } from "@lezer/highlight";
+import { completeFenceLanguage, type FenceLanguage, fenceCompletions } from "./fence-languages";
 import { textChanges } from "./text-diff";
 
 export interface EditorOptions {
@@ -116,6 +118,13 @@ const appTheme = EditorView.theme({
   ".cm-panel.cm-panel-lint button[name=close]": { color: "var(--fg)" },
   ".cm-lintRange-warning": { backgroundSize: "auto" },
   ".cm-gutter-lint": { width: "1.2em" },
+  ".cm-tooltip.cm-tooltip-autocomplete > ul": { fontFamily: "var(--font-mono)", maxHeight: "16em" },
+  ".cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected]": {
+    backgroundColor: "color-mix(in srgb, var(--accent) 30%, transparent)",
+    color: "var(--fg)",
+  },
+  ".cm-completionDetail": { color: "var(--muted)", fontFamily: "var(--font-ui, system-ui)", marginLeft: "1em" },
+  ".cm-completionMatchedText": { textDecoration: "none", fontWeight: "600" },
 });
 
 const numbers = new Compartment();
@@ -127,6 +136,8 @@ export class MarkdownEditor {
   private readonly tabs = new Map<string, TabEditor>();
   private current: string | undefined;
   private options: EditorOptions;
+  /** Language names offered after a code fence. */
+  private fenceLanguages: Completion[] = [];
 
   constructor(
     parent: HTMLElement,
@@ -253,6 +264,11 @@ export class MarkdownEditor {
     return state ? diagnosticCount(state) : 0;
   }
 
+  /** The language names to offer after a code fence (from the highlighter). */
+  setFenceLanguages(languages: readonly FenceLanguage[]): void {
+    this.fenceLanguages = fenceCompletions(languages);
+  }
+
   /** Opens the list of lint issues below the editor. */
   openProblems(): void {
     if (!this.current) return;
@@ -306,6 +322,23 @@ export class MarkdownEditor {
       });
       actions.push({ name: `Fix all ${issue.rule}`, apply: () => this.callbacks.fixAll(tab, [issue.rule]) });
     }
+    if (issue.rule === "MD040" && this.fenceLanguages.length > 0) {
+      actions.push({
+        name: "Language…",
+        apply: (view) => {
+          if (view.state.doc !== linted) {
+            forceLinting(view);
+            return;
+          }
+          // Cursor right after the fence marker, then show the language list.
+          const line = view.state.doc.lineAt(issue.from);
+          const fence = /^[`~]+/.exec(line.text.slice(issue.from - line.from))?.[0] ?? "";
+          view.dispatch({ selection: { anchor: issue.from + fence.length }, scrollIntoView: true });
+          view.focus();
+          startCompletion(view);
+        },
+      });
+    }
     return {
       from: issue.from,
       to: issue.to,
@@ -344,6 +377,8 @@ export class MarkdownEditor {
       bracketMatching(),
       highlightSelectionMatches(),
       search({ top: true }),
+      // Only the language after a code fence is completed.
+      autocompletion({ override: [(context) => completeFenceLanguage(context, this.fenceLanguages)], icons: false }),
       // Code fences get their language's highlighting (loaded on demand).
       markdown({ base: markdownLanguage, codeLanguages: languages }),
       // Token classes (tok-*) styled in CSS, so colours follow light/dark mode.

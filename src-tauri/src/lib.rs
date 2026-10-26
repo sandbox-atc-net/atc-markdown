@@ -54,6 +54,7 @@ pub fn run() {
             commands::lint_source,
             commands::fix_source,
             commands::lint_rules,
+            commands::code_languages,
             commands::exit_app,
             commands::close_all_documents,
             commands::path_kind,

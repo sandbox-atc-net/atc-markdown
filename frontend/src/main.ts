@@ -5,6 +5,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { ask, message, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { commandForKey, isCommand, type Command } from "./commands";
 import { MarkdownEditor, type EditorOptions, type LintIssue } from "./editor";
+import type { FenceLanguage } from "./fence-languages";
 import { parseSourcePos, previewScrollFor, type Block } from "./scroll-sync";
 import { copyText, enhance, enhanceRich } from "./enhance";
 import {
@@ -2112,6 +2113,10 @@ async function main(): Promise<void> {
       if (doc?.path === tab) renderDocBar(doc);
     },
   });
+  // Not needed for the first paint; the list arrives while the window opens.
+  void invoke<FenceLanguage[]>("code_languages")
+    .then((languages) => editor.setFenceLanguages(languages))
+    .catch(reportError);
   wireEditorSplitter();
   await getCurrentWindow().onCloseRequested(onCloseRequested);
 

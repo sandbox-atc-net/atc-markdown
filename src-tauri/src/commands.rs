@@ -249,6 +249,12 @@ pub fn lint_rules() -> &'static [atc_markdown_core::RuleInfo] {
     atc_markdown_core::RULES
 }
 
+/// Fence names the highlighter knows, popular ones first (the editor's language list).
+#[tauri::command]
+pub fn code_languages() -> &'static [atc_markdown_core::FenceLanguage] {
+    atc_markdown_core::fence_languages()
+}
+
 /// Called when a tab is closed: stop watching the file.
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)]
