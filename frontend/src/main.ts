@@ -4,7 +4,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { ask, message, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { commandForKey, isCommand, type Command } from "./commands";
-import { MarkdownEditor } from "./editor";
+import { MarkdownEditor, type EditorOptions, type LintIssue } from "./editor";
 import { parseSourcePos, previewScrollFor, type Block } from "./scroll-sync";
 import { copyText, enhance, enhanceRich } from "./enhance";
 import {
@@ -13,6 +13,7 @@ import {
   stepTextSize,
   type Settings,
   type SettingsChanges,
+  type LintRule,
   type ViewMode,
 } from "./settings";
 import { renderSettingsView, type CodeThemeChoice } from "./settings-view";
@@ -93,6 +94,7 @@ let state: TabState = emptyTabs;
 /** The user's settings; replaced on every `settings-changed` event. */
 let settings: Settings;
 let codeThemes: CodeThemeChoice[] = [];
+let lintRules: LintRule[] = [];
 /** The tab currently shown, to avoid needless re-renders. */
 let shown: OpenDocument | undefined;
 /** The sidebar currently shown, so its scroll position survives page changes. */
@@ -755,6 +757,7 @@ function renderDocBar(doc: OpenDocument | undefined): void {
     numbersButton.setAttribute("aria-pressed", String(settings.editor.lineNumbers));
     numbersButton.addEventListener("click", () => runCommand("editor-line-numbers"));
     parts.push(numbersButton);
+    if (settings.linting.enabled && editor.has(doc.path)) parts.push(lintButton(editor.lintCount(doc.path)));
   }
 
   const spacer = document.createElement("span");
@@ -786,6 +789,18 @@ function renderDocBar(doc: OpenDocument | undefined): void {
     parts.push(status);
   }
   docBar.replaceChildren(...parts);
+}
+
+/** "⚠ 7": the lint issue count; opens the problems list. */
+function lintButton(count: number): HTMLButtonElement {
+  const button = toolButton(
+    count === 0 ? "✓" : `⚠ ${count}`,
+    count === 0 ? "No lint issues" : `${count} lint issue${count === 1 ? "" : "s"} – show them (Ctrl+Shift+M)`,
+    () => runCommand("lint-panel"),
+  );
+  button.className = count === 0 ? "tool lint-count clean" : "tool lint-count";
+  button.setAttribute("aria-label", button.title);
+  return button;
 }
 
 function toolButton(label: string, title: string, onClick: () => void, primary = false): HTMLButtonElement {
@@ -995,6 +1010,7 @@ async function saveTab(doc: OpenDocument, saveAs = false, force = false): Promis
     path = chosen;
   }
 
+  if (settings.linting.enabled && settings.linting.fixOnSave) await fixTab(doc.path, SAFE_ON_SAVE, true);
   const request = {
     text: editor.text(doc.path),
     lineEnding: edit.lineEnding,
@@ -1103,6 +1119,63 @@ async function onCloseRequested(event: { preventDefault(): void }): Promise<void
   await getCurrentWindow().destroy();
 }
 
+// ---------------------------------------------------------------- linting
+
+/**
+ * Fixes applied on save: whitespace and blank lines only, checked on all ATC
+ * docs not to change the rendered page. (MD010 changes code, MD018 can turn
+ * "#123 is fixed" into a heading, MD027/MD031 can change quotes and lists.)
+ */
+const SAFE_ON_SAVE = ["MD009", "MD012", "MD019", "MD021", "MD022", "MD023", "MD032", "MD047"];
+
+/** Project config files we already warned about, so a broken one is reported once. */
+const reportedConfigErrors = new Set<string>();
+
+interface LintResult {
+  diagnostics: LintIssue[];
+  configFile: string | null;
+  configError: string | null;
+}
+
+/** Where the editor's text comes from, for finding the project config and wiki rules. */
+function lintTarget(tab: string): { path: string | null; wikiRoot: string | null } {
+  const doc = state.tabs.find((t) => t.path === tab);
+  return { path: doc && !doc.edit?.untitled ? doc.path : null, wikiRoot: doc?.wikiRoot ?? null };
+}
+
+async function lintTab(tab: string, text: string): Promise<LintIssue[]> {
+  const result = await invoke<LintResult>("lint_source", { text, ...lintTarget(tab) });
+  if (result.configError && result.configFile && !reportedConfigErrors.has(result.configFile)) {
+    reportedConfigErrors.add(result.configFile);
+    showToast(`Lint config ignored: ${result.configError}`);
+  }
+  return result.diagnostics;
+}
+
+/** Fixes lint issues (of `rules`, or all) in a tab, as one undo step. */
+async function fixTab(tab: string, rules: string[], quiet = false): Promise<void> {
+  const text = editor.text(tab);
+  const fixed = await invoke<string>("fix_source", {
+    text,
+    ...lintTarget(tab),
+    rules: rules.length > 0 ? rules : null,
+  });
+  if (fixed !== text) editor.replaceText(tab, fixed);
+  else if (!quiet) showToast("Nothing to fix automatically");
+}
+
+/** Opens the problems list; shows the editor first if only the preview is visible. */
+async function showProblems(): Promise<void> {
+  const doc = activeTab(state);
+  if (!doc || doc.wiki || doc.settings) return;
+  if (modeOf(doc) === "preview") await setMode("split");
+  editor.openProblems();
+}
+
+function editorOptions(): EditorOptions {
+  return { ...settings.editor, lint: settings.linting.enabled };
+}
+
 // ---------------------------------------------------------------- settings
 
 /** Saves a change; the `settings-changed` event then applies it everywhere. */
@@ -1160,17 +1233,22 @@ function onSettingsChanged(next: Settings): void {
   if (needsRerender(before, next)) void reloadAllTabs().catch(reportError);
   else if (before.rendering.mermaid !== next.rendering.mermaid) rerenderShown();
   if (shown?.settings) renderSettings();
-  if (before.editor.lineNumbers !== next.editor.lineNumbers || before.editor.wrapLines !== next.editor.wrapLines) {
-    editor.setOptions(next.editor);
+  if (
+    before.editor.lineNumbers !== next.editor.lineNumbers ||
+    before.editor.wrapLines !== next.editor.wrapLines ||
+    before.linting.enabled !== next.linting.enabled
+  ) {
+    editor.setOptions(editorOptions());
     renderDocBar(activeTab(state));
   }
+  if (JSON.stringify(before.linting) !== JSON.stringify(next.linting)) editor.relint();
   updateOutline();
   // Wiki chrome (page list, banner) reads settings while rendering.
   if (before.wiki.offerOpenAsWiki !== next.wiki.offerOpenAsWiki) renderBanner(shown);
 }
 
 function renderSettings(): void {
-  renderSettingsView(settingsView, settings, codeThemes, {
+  renderSettingsView(settingsView, settings, codeThemes, lintRules, {
     update: updateSettings,
     reset: (section) => {
       void invoke<Settings>("default_settings")
@@ -1902,6 +1980,14 @@ function runCommand(command: Command): void {
     case "editor-line-numbers":
       updateSettings({ editor: { lineNumbers: !settings.editor.lineNumbers } });
       break;
+    case "lint-panel":
+      run(showProblems());
+      break;
+    case "lint-fix-all": {
+      const doc = activeTab(state);
+      if (doc && editor.has(doc.path) && modeOf(doc) !== "preview") run(fixTab(doc.path, []));
+      break;
+    }
     case "open":
       run(showOpenDialog());
       break;
@@ -2015,9 +2101,16 @@ async function main(): Promise<void> {
   systemDark.addEventListener("change", applySettings);
   codeThemes = await invoke<CodeThemeChoice[]>("code_themes");
 
-  editor = new MarkdownEditor(editorPane, settings.editor, {
+  lintRules = await invoke<LintRule[]>("lint_rules");
+  editor = new MarkdownEditor(editorPane, editorOptions(), {
     changed: onEditorChanged,
     scrolled: onEditorScrolled,
+    lint: lintTab,
+    fixAll: (tab, rules) => void fixTab(tab, rules).catch(reportError),
+    linted: (tab) => {
+      const doc = activeTab(state);
+      if (doc?.path === tab) renderDocBar(doc);
+    },
   });
   wireEditorSplitter();
   await getCurrentWindow().onCloseRequested(onCloseRequested);

@@ -23,6 +23,8 @@ export const COMMANDS = [
   "mode-split",
   "mode-edit",
   "editor-line-numbers",
+  "lint-panel",
+  "lint-fix-all",
   "reload",
   "find",
   "find-next",
@@ -63,6 +65,8 @@ const IN_EDITOR: ReadonlySet<Command> = new Set<Command>([
   "settings",
   "toggle-edit",
   "editor-line-numbers",
+  "lint-panel",
+  "lint-fix-all",
   "reload",
   "zoom-in",
   "zoom-out",
@@ -101,6 +105,13 @@ function commandForKeyAnywhere(e: KeyPress): Command | undefined {
       return e.shiftKey ? "save-as" : "save";
     case "e":
       return "toggle-edit";
+    case "m":
+      return e.shiftKey ? "lint-panel" : undefined;
+    // Ctrl+Shift+. (Shift+. is ">" on US and ":" on Nordic keyboards).
+    case ".":
+    case ">":
+    case ":":
+      return e.shiftKey ? "lint-fix-all" : undefined;
     case "w":
       return "close-tab";
     case "t":

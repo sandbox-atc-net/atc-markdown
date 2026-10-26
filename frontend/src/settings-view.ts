@@ -1,7 +1,7 @@
 // The Settings tab: sections of controls built from a declarative list, with a
 // search box. Every change is applied at once; there is no Save button.
 
-import { TEXT_SIZES, type Settings, type SettingsChanges } from "./settings";
+import { TEXT_SIZES, type LintRule, type Settings, type SettingsChanges } from "./settings";
 
 type Section = keyof Omit<Settings, "version">;
 
@@ -15,7 +15,8 @@ interface FieldBase {
 type Field =
   | (FieldBase & { kind: "select"; options: readonly (readonly [string, string])[]; numeric?: boolean })
   | (FieldBase & { kind: "toggle" })
-  | (FieldBase & { kind: "text"; placeholder: string });
+  | (FieldBase & { kind: "text"; placeholder: string })
+  | (FieldBase & { kind: "rule"; defaultOn: boolean });
 
 export interface CodeThemeChoice {
   id: string;
@@ -36,7 +37,24 @@ const onOff = (label: string, section: Section, key: string, hint?: string): Fie
   hint,
 });
 
-function sections(codeThemes: readonly CodeThemeChoice[]): { id: Section; title: string; fields: Field[] }[] {
+/** One switch per lint rule (MD013 is set by "Maximum line length"). */
+function ruleFields(rules: readonly LintRule[]): Field[] {
+  return rules
+    .filter((rule) => rule.id !== "MD013")
+    .map((rule) => ({
+      kind: "rule",
+      section: "linting",
+      key: rule.id,
+      label: `${rule.id} ${rule.alias}`,
+      hint: `${rule.description}${rule.fixable ? " · can be fixed" : ""}`,
+      defaultOn: rule.defaultOn,
+    }));
+}
+
+function sections(
+  codeThemes: readonly CodeThemeChoice[],
+  lintRules: readonly LintRule[],
+): { id: Section; title: string; fields: Field[] }[] {
   return [
     {
       id: "appearance",
@@ -203,6 +221,50 @@ function sections(codeThemes: readonly CodeThemeChoice[]): { id: Section; title:
       ],
     },
     {
+      id: "linting",
+      title: "Linting",
+      fields: [
+        onOff("Show lint issues", "linting", "enabled", "Style problems are underlined in the editor (markdownlint rules)."),
+        onOff(
+          "Use the project's .markdownlint.json",
+          "linting",
+          "useProjectConfig",
+          "The nearest .markdownlint.json / .jsonc / .yaml above the file wins over the settings below.",
+        ),
+        {
+          kind: "select",
+          section: "linting",
+          key: "lineLength",
+          label: "Maximum line length",
+          hint: "MD013. Long lines are normal in prose and tables, so it is off by default.",
+          options: [
+            ["0", "Off"],
+            ["80", "80"],
+            ["100", "100"],
+            ["120", "120"],
+            ["160", "160"],
+            ["200", "200"],
+          ],
+          numeric: true,
+        },
+        {
+          kind: "select",
+          section: "linting",
+          key: "listIndent",
+          label: "Nested list indent",
+          hint: "MD007. Spaces per level of a nested bullet list.",
+          options: [
+            ["2", "2 spaces"],
+            ["3", "3 spaces"],
+            ["4", "4 spaces"],
+          ],
+          numeric: true,
+        },
+        onOff("Fix issues when saving", "linting", "fixOnSave", "Only issues that can be fixed safely, like trailing spaces."),
+        ...ruleFields(lintRules),
+      ],
+    },
+    {
       id: "code",
       title: "Code blocks",
       fields: [
@@ -225,6 +287,7 @@ function sections(codeThemes: readonly CodeThemeChoice[]): { id: Section; title:
 }
 
 function value(settings: Settings, field: Field): unknown {
+  if (field.kind === "rule") return settings.linting.rules[field.key] ?? field.defaultOn;
   return (settings[field.section] as Record<string, unknown>)[field.key];
 }
 
@@ -232,6 +295,21 @@ function control(settings: Settings, field: Field, actions: SettingsActions): HT
   const id = `setting-${field.section}-${field.key}`;
   const change = (v: unknown) => actions.update({ [field.section]: { [field.key]: v } } as SettingsChanges);
 
+  if (field.kind === "rule") {
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.id = id;
+    input.className = "toggle";
+    input.checked = value(settings, field) === true;
+    input.addEventListener("change", () => {
+      // The whole map is replaced; keep only rules that differ from their default.
+      const rules = { ...settings.linting.rules };
+      if (input.checked === field.defaultOn) delete rules[field.key];
+      else rules[field.key] = input.checked;
+      actions.update({ linting: { rules } });
+    });
+    return input;
+  }
   if (field.kind === "toggle") {
     const input = document.createElement("input");
     input.type = "checkbox";
@@ -270,6 +348,7 @@ export function renderSettingsView(
   container: HTMLElement,
   settings: Settings,
   codeThemes: readonly CodeThemeChoice[],
+  lintRules: readonly LintRule[],
   actions: SettingsActions,
 ): void {
   const focusedId = document.activeElement?.id;
@@ -288,7 +367,7 @@ export function renderSettingsView(
   search.value = query;
 
   const body = document.createElement("div");
-  for (const section of sections(codeThemes)) {
+  for (const section of sections(codeThemes, lintRules)) {
     const card = document.createElement("section");
     card.className = "settings-section";
     card.dataset.section = section.id;

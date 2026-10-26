@@ -957,6 +957,8 @@ body.sidebar-right .outline { order: 0; border-left: 0; border-right: 1px solid 
 .doc-bar .status.dirty { color: var(--alert-warning); }
 .doc-bar .status.conflict { color: var(--danger); font-weight: 600; }
 .doc-bar .primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.doc-bar .lint-count { color: var(--alert-warning); border-color: color-mix(in srgb, var(--alert-warning) 45%, transparent); font-variant-numeric: tabular-nums; }
+.doc-bar .lint-count.clean { color: var(--alert-tip); border-color: var(--border); }
 
 .editor-pane {
   flex: 0 0 var(--editor-width, 50%);

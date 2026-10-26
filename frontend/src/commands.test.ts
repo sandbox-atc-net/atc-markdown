@@ -40,4 +40,12 @@ describe("commandForKey", () => {
     expect(commandForKey(press("Tab", { ctrlKey: true }), true)).toBe("next-tab");
     expect(commandForKey(press("F5"), true)).toBe("reload");
   });
+
+  it("maps the lint shortcuts on US and Nordic keyboards", () => {
+    expect(commandForKey(ctrl("M", true))).toBe("lint-panel");
+    expect(commandForKey(ctrl("m"))).toBeUndefined();
+    expect(commandForKey(ctrl(">", true), true)).toBe("lint-fix-all");
+    expect(commandForKey(ctrl(":", true), true)).toBe("lint-fix-all");
+    expect(commandForKey(ctrl("."))).toBeUndefined();
+  });
 });

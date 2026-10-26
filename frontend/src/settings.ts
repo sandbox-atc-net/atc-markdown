@@ -35,6 +35,26 @@ export interface Settings {
   rendering: { frontMatter: FrontMatterStyle; emoji: boolean; mermaid: boolean; math: boolean };
   code: { copyButton: CopyButton; wrapLines: boolean; lineNumbers: boolean };
   editor: { lineNumbers: boolean; wrapLines: boolean; defaultMode: ViewMode };
+  linting: {
+    enabled: boolean;
+    useProjectConfig: boolean;
+    /** MD013 line length; 0 = off. */
+    lineLength: number;
+    /** MD007 spaces per nested list level. */
+    listIndent: number;
+    fixOnSave: boolean;
+    /** Rules turned on/off by the user, by id. */
+    rules: Record<string, boolean>;
+  };
+}
+
+/** A markdownlint rule, as listed by `lint_rules`. */
+export interface LintRule {
+  id: string;
+  alias: string;
+  description: string;
+  fixable: boolean;
+  defaultOn: boolean;
 }
 
 /** A partial update, as sent to `update_settings`. */

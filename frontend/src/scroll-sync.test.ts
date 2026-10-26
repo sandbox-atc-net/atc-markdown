@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { minimalChange } from "./editor";
 import { parseSourcePos, previewScrollFor, type Block } from "./scroll-sync";
 
 const blocks: Block[] = [
@@ -27,14 +26,5 @@ describe("scroll sync", () => {
     expect(previewScrollFor(blocks, 8)).toBe(140 + (200 - 140) * 0.5);
     expect(previewScrollFor(blocks, 40)).toBe(400);
     expect(previewScrollFor([], 10)).toBe(0);
-  });
-});
-
-describe("minimalChange", () => {
-  it("replaces only the part that differs", () => {
-    expect(minimalChange("hello world", "hello brave world")).toEqual({ from: 6, to: 6, insert: "brave " });
-    expect(minimalChange("abc", "abc")).toEqual({ from: 3, to: 3, insert: "" });
-    expect(minimalChange("abcdef", "abXYef")).toEqual({ from: 2, to: 4, insert: "XY" });
-    expect(minimalChange("", "new")).toEqual({ from: 0, to: 0, insert: "new" });
   });
 });

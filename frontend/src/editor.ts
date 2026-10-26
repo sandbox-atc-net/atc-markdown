@@ -5,6 +5,16 @@ import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirro
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { bracketMatching, indentOnInput, syntaxHighlighting } from "@codemirror/language";
 import { languages } from "@codemirror/language-data";
+import {
+  diagnosticCount,
+  forceLinting,
+  linter,
+  lintGutter,
+  lintKeymap,
+  openLintPanel,
+  setDiagnosticsEffect,
+  type Diagnostic,
+} from "@codemirror/lint";
 import { highlightSelectionMatches, openSearchPanel, search, searchKeymap } from "@codemirror/search";
 import { Compartment, EditorState, type Extension, type Text } from "@codemirror/state";
 import {
@@ -18,10 +28,24 @@ import {
   rectangularSelection,
 } from "@codemirror/view";
 import { classHighlighter } from "@lezer/highlight";
+import { textChanges } from "./text-diff";
 
 export interface EditorOptions {
   lineNumbers: boolean;
   wrapLines: boolean;
+  /** Show lint issues (markdownlint rules). */
+  lint: boolean;
+}
+
+/** A lint issue from `lint_source` (positions in UTF-16 units, like the editor). */
+export interface LintIssue {
+  rule: string;
+  alias: string;
+  message: string;
+  line: number;
+  from: number;
+  to: number;
+  fix: { from: number; to: number; insert: string }[] | null;
 }
 
 export interface EditorCallbacks {
@@ -29,6 +53,12 @@ export interface EditorCallbacks {
   changed(tab: string): void;
   /** The editor scrolled (for scroll sync). */
   scrolled(tab: string): void;
+  /** Lints a tab's text. */
+  lint(tab: string, text: string): Promise<LintIssue[]>;
+  /** Fixes all issues of these rules (all rules if empty) in a tab. */
+  fixAll(tab: string, rules: string[]): void;
+  /** The number of lint issues of the shown tab changed. */
+  linted(tab: string, count: number): void;
 }
 
 interface TabEditor {
@@ -64,24 +94,33 @@ const appTheme = EditorView.theme({
   },
   ".cm-button": { backgroundImage: "none", backgroundColor: "var(--bg)", color: "var(--fg)", border: "1px solid var(--border)" },
   ".cm-matchingBracket": { backgroundColor: "color-mix(in srgb, var(--accent) 20%, transparent)", outline: "none" },
+  ".cm-tooltip": { backgroundColor: "var(--bg)", color: "var(--fg)", border: "1px solid var(--border)", borderRadius: "6px" },
+  ".cm-tooltip-lint": { fontFamily: "var(--font-ui, system-ui)", fontSize: "13px", maxWidth: "520px" },
+  ".cm-diagnostic": { padding: "6px 10px", borderLeftWidth: "4px" },
+  ".cm-diagnosticSource": { color: "var(--muted)", opacity: "1" },
+  ".cm-diagnosticAction": {
+    backgroundColor: "var(--accent)",
+    color: "#fff",
+    borderRadius: "4px",
+    padding: "1px 8px",
+    font: "inherit",
+    fontSize: "12px",
+  },
+  ".cm-panel.cm-panel-lint": { fontFamily: "var(--font-ui, system-ui)", fontSize: "13px" },
+  ".cm-panel.cm-panel-lint ul": { maxHeight: "160px" },
+  ".cm-panel.cm-panel-lint ul [aria-selected]": { backgroundColor: "color-mix(in srgb, var(--accent) 18%, transparent)" },
+  ".cm-panel.cm-panel-lint ul:focus [aria-selected]": {
+    backgroundColor: "color-mix(in srgb, var(--accent) 30%, transparent)",
+    color: "var(--fg)",
+  },
+  ".cm-panel.cm-panel-lint button[name=close]": { color: "var(--fg)" },
+  ".cm-lintRange-warning": { backgroundSize: "auto" },
+  ".cm-gutter-lint": { width: "1.2em" },
 });
 
 const numbers = new Compartment();
 const wrapping = new Compartment();
-
-/** Minimal edit from `before` to `after`, so the cursor and selection survive a reload. */
-export function minimalChange(before: string, after: string): { from: number; to: number; insert: string } {
-  let start = 0;
-  const max = Math.min(before.length, after.length);
-  while (start < max && before.charCodeAt(start) === after.charCodeAt(start)) start += 1;
-  let endBefore = before.length;
-  let endAfter = after.length;
-  while (endBefore > start && endAfter > start && before.charCodeAt(endBefore - 1) === after.charCodeAt(endAfter - 1)) {
-    endBefore -= 1;
-    endAfter -= 1;
-  }
-  return { from: start, to: endBefore, insert: after.slice(start, endAfter) };
-}
+const linting = new Compartment();
 
 export class MarkdownEditor {
   private readonly view: EditorView;
@@ -161,11 +200,14 @@ export class MarkdownEditor {
     return tab === this.current ? this.view.state.doc : this.tabs.get(tab)?.state.doc;
   }
 
-  /** Replaces a tab's text with a minimal change, keeping cursor and scroll position. */
+  /**
+   * Replaces a tab's text with small changes (one undo step), so the cursor
+   * and scroll position stay outside the lines that changed.
+   */
   replaceText(tab: string, text: string): void {
     const before = this.text(tab);
     if (before === text) return;
-    const change = minimalChange(before, text);
+    const change = textChanges(before, text);
     if (tab === this.current) {
       this.view.dispatch({ changes: change });
       return;
@@ -194,10 +236,28 @@ export class MarkdownEditor {
     return this.view.state.doc.lineAt(block.from).number;
   }
 
-  /** Applies changed settings (line numbers, wrapping) to the shown editor. */
+  /** Applies changed settings (line numbers, wrapping, linting) to the shown editor. */
   setOptions(options: EditorOptions): void {
     this.options = options;
     this.applyOptions();
+  }
+
+  /** Lints the shown tab again now (after lint settings changed). */
+  relint(): void {
+    if (this.current && this.options.lint) forceLinting(this.view);
+  }
+
+  /** Number of lint issues in a tab (as last linted). */
+  lintCount(tab: string): number {
+    const state = tab === this.current ? this.view.state : this.tabs.get(tab)?.state;
+    return state ? diagnosticCount(state) : 0;
+  }
+
+  /** Opens the list of lint issues below the editor. */
+  openProblems(): void {
+    if (!this.current) return;
+    this.view.focus();
+    openLintPanel(this.view);
   }
 
   private applyOptions(): void {
@@ -205,8 +265,55 @@ export class MarkdownEditor {
       effects: [
         numbers.reconfigure(this.numbersExtension()),
         wrapping.reconfigure(this.options.wrapLines ? EditorView.lineWrapping : []),
+        linting.reconfigure(this.lintExtension()),
       ],
     });
+  }
+
+  /** Lint underlines, gutter markers and the problems panel, while linting is on. */
+  private lintExtension(): Extension {
+    if (!this.options.lint) return [];
+    return [
+      linter(
+        async (view) => {
+          const tab = this.current;
+          if (!tab) return [];
+          const doc = view.state.doc;
+          const issues = await this.callbacks.lint(tab, doc.toString());
+          return issues.map((issue) => this.diagnostic(tab, doc, issue));
+        },
+        { delay: 400 },
+      ),
+      // Its own gutter, so the markers stay when line numbers are off.
+      lintGutter(),
+    ];
+  }
+
+  private diagnostic(tab: string, linted: Text, issue: LintIssue): Diagnostic {
+    const actions: { name: string; apply: (view: EditorView) => void }[] = [];
+    const fix = issue.fix;
+    if (fix) {
+      actions.push({
+        name: "Fix",
+        apply: (view) => {
+          // Positions are from the linted text; if it changed since, lint again first.
+          if (view.state.doc !== linted) {
+            forceLinting(view);
+            return;
+          }
+          view.dispatch({ changes: fix.map((e) => ({ from: e.from, to: e.to, insert: e.insert })), userEvent: "lint.fix" });
+        },
+      });
+      actions.push({ name: `Fix all ${issue.rule}`, apply: () => this.callbacks.fixAll(tab, [issue.rule]) });
+    }
+    return {
+      from: issue.from,
+      to: issue.to,
+      severity: "warning",
+      message: issue.message,
+      source: `${issue.rule}/${issue.alias}`,
+      actions,
+    };
   }
 
   private numbersExtension(): Extension {
@@ -227,6 +334,7 @@ export class MarkdownEditor {
     return [
       numbers.of(this.numbersExtension()),
       wrapping.of(this.options.wrapLines ? EditorView.lineWrapping : []),
+      linting.of(this.lintExtension()),
       history(),
       drawSelection(),
       highlightSpecialChars(),
@@ -241,9 +349,14 @@ export class MarkdownEditor {
       // Token classes (tok-*) styled in CSS, so colours follow light/dark mode.
       syntaxHighlighting(classHighlighter),
       appTheme,
-      keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap, indentWithTab]),
+      keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap, ...lintKeymap, indentWithTab]),
       EditorView.updateListener.of((update) => {
-        if (update.docChanged && this.current) this.callbacks.changed(this.current);
+        if (!this.current) return;
+        if (update.docChanged) this.callbacks.changed(this.current);
+        const linted = update.transactions.some((tr) => tr.effects.some((e) => e.is(setDiagnosticsEffect)));
+        if (linted) {
+          this.callbacks.linted(this.current, diagnosticCount(update.state));
+        }
       }),
       EditorView.contentAttributes.of({ spellcheck: "false", "aria-label": "Markdown source" }),
     ];

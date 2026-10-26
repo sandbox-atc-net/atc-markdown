@@ -18,6 +18,7 @@ export const defaults: Settings = {
   rendering: { frontMatter: "table", emoji: true, mermaid: true, math: true },
   code: { copyButton: "hover", wrapLines: false, lineNumbers: false },
   editor: { lineNumbers: true, wrapLines: true, defaultMode: "preview" },
+  linting: { enabled: true, useProjectConfig: true, lineLength: 0, listIndent: 2, fixOnSave: false, rules: {} },
 };
 
 describe("applied", () => {
