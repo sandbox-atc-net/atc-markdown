@@ -134,7 +134,7 @@ UX: a browser-style **status bubble** in the bottom-left corner of the document 
   | Other local file | 📁 Show in Explorer/Finder · `assets/diagram.drawio`; "(not found)" in muted red if it doesn't exist |
   | Unsupported/blocked (`javascript:`, `file:`, …) | ⛔ Blocked link · not opened |
   | Mailto | ✉ Email `name@example.com` |
-- 🚧 Anti-spoofing: if the link text looks like a URL/domain and differs from the real host (e.g. text `microsoft.com`, target `micros0ft.example`), add a ⚠ warning in the bubble; show punycode (`xn--`) hosts decoded *and* raw — warning done; punycode is flagged but not yet decoded to Unicode
+- ✅ Anti-spoofing: if the link text looks like a URL/domain and differs from the real host (e.g. text `microsoft.com`, target `micros0ft.example`), add a ⚠ warning in the bubble; show punycode (`xn--`) hosts decoded *and* raw — both done; when the text names another site *and* the host is punycode, both warnings are shown
 - ✅ Resolution in Rust via a side-effect-free `describe_link(document_path, href)` command (same `resolve_link` as `follow_link`, so the preview never disagrees with the click); results cached per document in the frontend
 - ✅ Long paths/URLs: middle-ellipsis (`https://github.com/…/blob/main/README.md`) with max width ~60% of the window; full value available via "Copy link address"
 - ✅ Right-click context menu on links: Open, Copy link address, (for local files) Show in Explorer/Finder
@@ -188,7 +188,9 @@ Status (checked 2026-10-25): syntect's built-in syntax set already colours `rust
 - A `.md` containing `<script>alert(1)</script>` and `[x](javascript:alert(1))` executes nothing.
 - Relative images next to the file render.
 
-### Phase 1.5 – Distribution
+### Phase 1.5 – Distribution — postponed
+
+> **Postponed** (decided 2026-10-26): the app is still a proof of concept; release workflow, code signing and the macOS/Linux packages wait until it is ready for other users. Local NSIS builds (`npx tauri build --bundles nsis`) are used meanwhile.
 
 - ⬜ Windows: MSI/NSIS installer, code signing (avoid SmartScreen warnings)
 - ⬜ macOS: `.app` + `.dmg`, Developer ID signing + notarization (avoid Gatekeeper block); universal binary (x64 + arm64)
