@@ -7,11 +7,12 @@
 // On/off settings are naturally bools.
 #![allow(clippy::struct_excessive_bools)]
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
 
-use atc_markdown_core::{FrontMatterStyle, RenderOptions};
+use atc_markdown_core::{FrontMatterStyle, LintConfig, RenderOptions};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -225,6 +226,52 @@ impl Default for EditorSettings {
     }
 }
 
+/// Markdown linting in the editor (markdownlint rules).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct LintingSettings {
+    /// Show lint issues in the editor.
+    pub enabled: bool,
+    /// Use the nearest `.markdownlint.json` (or `.jsonc` / `.yaml`) above the file.
+    pub use_project_config: bool,
+    /// MD013 line length; 0 turns the rule off.
+    pub line_length: u32,
+    /// MD007 spaces per nested bullet list level.
+    pub list_indent: u32,
+    /// Fix what can be fixed when saving.
+    pub fix_on_save: bool,
+    /// Rules turned on or off by the user, by id (`MD033`).
+    pub rules: BTreeMap<String, bool>,
+}
+
+impl Default for LintingSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            use_project_config: true,
+            line_length: 0,
+            list_indent: 2,
+            fix_on_save: false,
+            rules: BTreeMap::new(),
+        }
+    }
+}
+
+impl LintingSettings {
+    /// The app's lint configuration (before a project config is applied).
+    pub fn config(&self) -> LintConfig {
+        let mut config = LintConfig::app_defaults();
+        config.set_param("MD007", "indent", Value::from(self.list_indent));
+        if self.line_length > 0 {
+            config.set_param("MD013", "line_length", Value::from(self.line_length));
+        }
+        for (rule, on) in &self.rules {
+            config.set_enabled(rule, *on);
+        }
+        config
+    }
+}
+
 /// All user settings.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -237,6 +284,7 @@ pub struct Settings {
     pub rendering: RenderingSettings,
     pub code: CodeSettings,
     pub editor: EditorSettings,
+    pub linting: LintingSettings,
 }
 
 impl Default for Settings {
@@ -250,6 +298,7 @@ impl Default for Settings {
             rendering: RenderingSettings::default(),
             code: CodeSettings::default(),
             editor: EditorSettings::default(),
+            linting: LintingSettings::default(),
         }
     }
 }
@@ -294,6 +343,15 @@ impl Settings {
         code_theme.clone_into(&mut self.appearance.code_theme);
         self.appearance.reading_font = clean_font(&self.appearance.reading_font);
         self.appearance.code_font = clean_font(&self.appearance.code_font);
+        self.linting.line_length = self.linting.line_length.min(1000);
+        self.linting.list_indent = self.linting.list_indent.clamp(1, 8);
+        // Known rules only, stored by id.
+        self.linting.rules = std::mem::take(&mut self.linting.rules)
+            .into_iter()
+            .filter_map(|(rule, on)| {
+                atc_markdown_core::rule_info(&rule).map(|r| (r.id.to_owned(), on))
+            })
+            .collect();
         self
     }
 
@@ -403,6 +461,21 @@ mod tests {
         assert_eq!(settings.wiki.sidebar_position, Side::Right);
         assert_eq!(settings.wiki.page_list, PageList::Collapsed);
         assert_eq!(settings.code, CodeSettings::default());
+    }
+
+    #[test]
+    fn lint_settings_build_the_config() {
+        let settings = Settings::from_value(&json!({
+            "linting": { "lineLength": 120, "listIndent": 4, "rules": { "no-inline-html": false, "MD999": true, "MD002": true } }
+        }));
+        assert_eq!(settings.linting.rules.len(), 2);
+        let config = settings.linting.config();
+        assert_eq!(config.params("MD013").unwrap()["line_length"], 120);
+        assert_eq!(config.params("MD007").unwrap()["indent"], 4);
+        assert!(!config.is_enabled("MD033"));
+        assert!(config.is_enabled("MD002"));
+        // Line length off by default.
+        assert!(!LintingSettings::default().config().is_enabled("MD013"));
     }
 
     #[test]

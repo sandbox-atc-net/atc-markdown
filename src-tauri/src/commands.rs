@@ -158,6 +158,97 @@ pub struct RenderedSource {
     missing_links: Vec<String>,
 }
 
+/// Lint results for the editor.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LintResult {
+    diagnostics: Vec<atc_markdown_core::Diagnostic>,
+    /// The project config file in use, if any.
+    config_file: Option<PathBuf>,
+    /// Why the project config file could not be used.
+    config_error: Option<String>,
+}
+
+/// The lint configuration for a file: the app settings, with the nearest
+/// project config file on top (when that setting is on).
+fn lint_config(
+    settings: &crate::settings::LintingSettings,
+    path: Option<&Path>,
+) -> (
+    atc_markdown_core::LintConfig,
+    Option<PathBuf>,
+    Option<String>,
+) {
+    let app = settings.config();
+    let found = settings
+        .use_project_config
+        .then(|| {
+            path.and_then(Path::parent)
+                .and_then(atc_markdown_core::find_config_file)
+        })
+        .flatten();
+    match found {
+        Some(file) => match atc_markdown_core::LintConfig::load(&file) {
+            Ok(project) => (app.with_project(&project), Some(file), None),
+            Err(error) => (app, Some(file), Some(error.to_string())),
+        },
+        None => (app, None, None),
+    }
+}
+
+/// Lints unsaved editor text. Positions are in UTF-16 units, like the editor's.
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+pub async fn lint_source(
+    settings: State<'_, SettingsStore>,
+    text: String,
+    path: Option<PathBuf>,
+    wiki_root: Option<PathBuf>,
+) -> Result<LintResult, String> {
+    let linting = settings.get().linting;
+    if !linting.enabled {
+        return Ok(LintResult {
+            diagnostics: Vec::new(),
+            config_file: None,
+            config_error: None,
+        });
+    }
+    let (config, config_file, config_error) = lint_config(&linting, path.as_deref());
+    Ok(LintResult {
+        diagnostics: atc_markdown_core::lint_utf16(&text, &config, wiki_root.is_some()),
+        config_file,
+        config_error,
+    })
+}
+
+/// Fixes what can be fixed, optionally only for some rules. Returns the new text.
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+pub async fn fix_source(
+    settings: State<'_, SettingsStore>,
+    text: String,
+    path: Option<PathBuf>,
+    wiki_root: Option<PathBuf>,
+    rules: Option<Vec<String>>,
+) -> Result<String, String> {
+    let (config, _, _) = lint_config(&settings.get().linting, path.as_deref());
+    let config = match rules {
+        Some(rules) => config.restricted_to(&rules),
+        None => config,
+    };
+    Ok(atc_markdown_core::fix_all(
+        &text,
+        &config,
+        wiki_root.is_some(),
+    ))
+}
+
+/// All lint rules, for the settings view.
+#[tauri::command]
+pub fn lint_rules() -> &'static [atc_markdown_core::RuleInfo] {
+    atc_markdown_core::RULES
+}
+
 /// Called when a tab is closed: stop watching the file.
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)]

@@ -32,6 +32,8 @@ pub const COMMAND_IDS: &[&str] = &[
     "mode-split",
     "mode-edit",
     "editor-line-numbers",
+    "lint-panel",
+    "lint-fix-all",
     "exit",
     "reload",
     "find",
@@ -157,6 +159,18 @@ fn view_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Submenu<R>> {
             "editor-line-numbers",
             "Editor &Line Numbers",
             &ctrl("Shift+N"),
+        )?)
+        .item(&menu_item(
+            app,
+            "lint-panel",
+            "Lint Pro&blems",
+            &ctrl("Shift+M"),
+        )?)
+        .item(&menu_item(
+            app,
+            "lint-fix-all",
+            "Fix All Lint Iss&ues",
+            &ctrl("Shift+."),
         )?)
         .separator()
         .item(&menu_item(app, "reload", "&Reload", "F5")?)
