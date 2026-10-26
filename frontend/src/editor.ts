@@ -136,6 +136,8 @@ export class MarkdownEditor {
   private readonly tabs = new Map<string, TabEditor>();
   private current: string | undefined;
   private options: EditorOptions;
+  /** The tab whose scroll position is about to be restored. */
+  private restoring: string | undefined;
   /** Language names offered after a code fence. */
   private fenceLanguages: Completion[] = [];
 
@@ -174,10 +176,26 @@ export class MarkdownEditor {
     this.view.setState(entry.state);
     this.applyOptions();
     this.current = tab;
-    // Restore after layout, when the editor has its size.
+    // Restore after layout, when the editor has its size (unless `goTo` moved on).
+    this.restoring = tab;
     requestAnimationFrame(() => {
-      if (this.current === tab) this.view.scrollDOM.scrollTop = entry.scrollTop;
+      if (this.current === tab && this.restoring === tab) this.view.scrollDOM.scrollTop = entry.scrollTop;
+      this.restoring = undefined;
     });
+  }
+
+  /** Puts the cursor on a line and column (1-based) of the shown tab and scrolls it into view. */
+  goTo(tab: string, line: number, column: number): void {
+    if (this.current !== tab) return;
+    this.restoring = undefined;
+    const doc = this.view.state.doc;
+    const target = doc.line(Math.min(Math.max(line, 1), doc.lines));
+    const pos = target.from + Math.min(Math.max(column - 1, 0), target.length);
+    this.view.dispatch({
+      selection: { anchor: pos },
+      effects: EditorView.scrollIntoView(pos, { y: "center" }),
+    });
+    this.view.focus();
   }
 
   /** Stops showing any tab (the editor pane is hidden). */

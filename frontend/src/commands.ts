@@ -25,6 +25,7 @@ export const COMMANDS = [
   "editor-line-numbers",
   "lint-panel",
   "lint-fix-all",
+  "lint-folder",
   "reload",
   "find",
   "find-next",

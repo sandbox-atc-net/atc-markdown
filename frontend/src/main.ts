@@ -29,6 +29,7 @@ import {
   activeTab,
   closeTab,
   emptyTabs,
+  isAppView,
   openTab,
   replaceTab,
   SETTINGS_TAB_PATH,
@@ -39,6 +40,11 @@ import {
   type OpenDocument,
   type TabState,
 } from "./tabs";
+import {
+  lintReportPath,
+  renderLintReport,
+  type FolderLint,
+} from "./lint-report-view";
 import { isInside, pageUrl, type WikiDocument, type WikiInfo, type WikiView } from "./wiki";
 import {
   markLinks,
@@ -82,6 +88,7 @@ const wikiHeader = element<HTMLElement>("#wiki-header");
 const wikiFooter = element<HTMLElement>("#wiki-footer");
 const wikiBanner = element<HTMLElement>("#wiki-banner");
 const settingsView = element<HTMLElement>("#settings-view");
+const reportView = element<HTMLElement>("#report-view");
 const docBar = element<HTMLElement>("#doc-bar");
 const editorPane = element<HTMLElement>("#editor-pane");
 const editorSplitter = element<HTMLElement>("#editor-splitter");
@@ -125,8 +132,9 @@ function render(): void {
 
   const doc = activeTab(state);
   empty.hidden = doc !== undefined;
-  preview.hidden = doc === undefined || doc.settings === true;
+  preview.hidden = doc === undefined || isAppView(doc);
   settingsView.hidden = doc?.settings !== true;
+  reportView.hidden = doc?.lintReport === undefined;
   renderEditorLayout(doc);
 
   // Typing changes only the edit state (dirty marker); the preview is then updated
@@ -137,7 +145,8 @@ function render(): void {
     doc.path === shown.path &&
     doc.html === shown.html &&
     doc.wiki === shown.wiki &&
-    doc.settings === shown.settings;
+    doc.settings === shown.settings &&
+    doc.lintReport === shown.lintReport;
   if (doc !== shown && sameContent) {
     shown = doc;
     void getCurrentWindow().setTitle(windowTitle(doc));
@@ -146,6 +155,7 @@ function render(): void {
     preview.innerHTML = (doc && liveHtml.get(doc.path)) ?? doc?.html ?? "";
     enhance(preview);
     if (doc?.settings) renderSettings();
+    if (doc?.lintReport) renderReport(doc.lintReport);
     renderWiki(doc);
     renderBanner(doc);
 
@@ -155,9 +165,9 @@ function render(): void {
     content.scrollTop = top;
     shown = doc;
     if (scroll?.fragment) scrollToId(scroll.fragment);
-    if (doc && !doc.settings) void renderRich(doc, top, scroll?.fragment);
+    if (doc && !isAppView(doc)) void renderRich(doc, top, scroll?.fragment);
     updateOutline();
-    if (doc && !doc.settings && !doc.html.includes('class="error"')) rememberRecent(doc);
+    if (doc && !isAppView(doc) && !doc.html.includes('class="error"')) rememberRecent(doc);
     if (!doc) renderRecent();
 
     void getCurrentWindow().setTitle(windowTitle(doc));
@@ -172,7 +182,7 @@ function render(): void {
 /** Shows the headings of the active document beside it (when the setting is on). */
 function updateOutline(): void {
   const doc = activeTab(state);
-  const items = doc && !doc.settings && settings.appearance.showOutline ? outlineItems(preview) : [];
+  const items = doc && !isAppView(doc) && settings.appearance.showOutline ? outlineItems(preview) : [];
   outline.hidden = items.length === 0;
   const onRight = settings.wiki.sidebarPosition !== "right";
   viewport.classList.toggle("outline-right", !outline.hidden && onRight);
@@ -232,7 +242,11 @@ function renderTab(doc: OpenDocument, index: number): HTMLElement {
   tab.className = doc.wiki ? "tab wiki" : doc.edit?.dirty ? "tab dirty" : "tab";
   tab.setAttribute("role", "tab");
   tab.setAttribute("aria-selected", String(index === state.activeIndex));
-  tab.title = doc.wiki ? `${doc.wiki.info.name} wiki – ${doc.path}` : doc.path;
+  tab.title = doc.wiki
+    ? `${doc.wiki.info.name} wiki – ${doc.path}`
+    : doc.lintReport
+      ? `Lint report – ${doc.lintReport.root}`
+      : doc.path;
   tab.addEventListener("click", () => setState(activateTab(state, index)));
   tab.addEventListener("auxclick", (e) => {
     if (e.button === 1) void closeDocument(index);
@@ -385,6 +399,12 @@ async function openPaths(paths: string[], fromOs = false): Promise<void> {
       await openWiki(kind.root);
       continue;
     }
+    // A tab being edited is only switched to: loading it again would drop its edit state.
+    const editing = state.tabs.findIndex((t) => t.edit !== undefined && t.path.toLowerCase() === path.toLowerCase());
+    if (editing >= 0) {
+      setState(activateTab(state, editing));
+      continue;
+    }
     const doc = await loadPath(path);
     if (!doc) continue;
     const active = activeTab(state);
@@ -393,7 +413,7 @@ async function openPaths(paths: string[], fromOs = false): Promise<void> {
       settings.files.openFromOs === "replaceCurrent" &&
       active &&
       !active.wiki &&
-      !active.settings &&
+      !isAppView(active) &&
       !active.edit?.dirty &&
       !active.edit?.untitled;
     const alreadyOpen = state.tabs.some((t) => t.path.toLowerCase() === doc.path.toLowerCase());
@@ -431,7 +451,7 @@ async function closeDocument(index: number): Promise<void> {
     setState(closeTab(state, index));
     return;
   }
-  if (!doc.settings) {
+  if (!isAppView(doc)) {
     const entry: SessionTab = doc.wiki
       ? { kind: "wiki", root: doc.wiki.info.root, page: doc.wiki.page.path }
       : { kind: "document", path: doc.path };
@@ -447,7 +467,7 @@ async function closeDocument(index: number): Promise<void> {
     const lastTabOfWiki = !state.tabs.some((t) => t !== doc && t.wiki?.info.root === root);
     if (lastTabOfWiki) void invoke("close_wiki", { root, files });
     else for (const path of files) void invoke("close_document", { path });
-  } else if (!doc.settings) {
+  } else if (!isAppView(doc)) {
     void invoke("close_document", { path: doc.path });
   }
   setState(closeTab(state, index));
@@ -642,6 +662,11 @@ async function refreshWikiPages(root: string): Promise<void> {
 async function reloadActive(): Promise<void> {
   const tab = shown;
   if (!tab) return;
+  if (tab.lintReport) {
+    await lintFolder(tab.lintReport.root);
+    return;
+  }
+  if (tab.settings) return;
   if (tab.edit && editor.has(tab.path)) {
     if (tab.edit.untitled) return;
     if (tab.edit.dirty) {
@@ -696,7 +721,7 @@ interface SourceFile {
 }
 
 const modeOf = (doc: OpenDocument | undefined): ViewMode =>
-  doc && !doc.wiki && !doc.settings ? (doc.edit?.mode ?? "preview") : "preview";
+  doc && !doc.wiki && !isAppView(doc) ? (doc.edit?.mode ?? "preview") : "preview";
 
 function forgetEditor(path: string): void {
   editor.forget(path);
@@ -725,7 +750,7 @@ function renderEditorLayout(doc: OpenDocument | undefined): void {
 
 /** The toolbar above a document: view mode, line numbers, save state. */
 function renderDocBar(doc: OpenDocument | undefined): void {
-  docBar.hidden = !doc || Boolean(doc.wiki) || Boolean(doc.settings);
+  docBar.hidden = !doc || Boolean(doc.wiki) || isAppView(doc);
   if (docBar.hidden || !doc) return;
   const mode = modeOf(doc);
 
@@ -837,7 +862,7 @@ async function ensureEditor(doc: OpenDocument): Promise<EditInfo | undefined> {
 /** Preview, Split or Editor for the active document. */
 async function setMode(mode: ViewMode): Promise<void> {
   const doc = activeTab(state);
-  if (!doc || doc.wiki || doc.settings) return;
+  if (!doc || doc.wiki || isAppView(doc)) return;
   if (mode === modeOf(doc)) return;
   const edit = mode === "preview" ? doc.edit : await ensureEditor(doc);
   if (mode !== "preview" && !edit) return;
@@ -1168,9 +1193,55 @@ async function fixTab(tab: string, rules: string[], quiet = false): Promise<void
 /** Opens the problems list; shows the editor first if only the preview is visible. */
 async function showProblems(): Promise<void> {
   const doc = activeTab(state);
-  if (!doc || doc.wiki || doc.settings) return;
+  if (!doc || doc.wiki || isAppView(doc)) return;
   if (modeOf(doc) === "preview") await setMode("split");
   editor.openProblems();
+}
+
+// --- folder lint report
+
+/** Asks for a folder (the open wiki or the document's folder first) and lints it. */
+async function chooseFolderToLint(): Promise<void> {
+  const doc = activeTab(state);
+  const lastFolder = doc?.lintReport?.root ?? doc?.wiki?.info.root ?? doc?.wikiRoot;
+  const docFolder = doc && !isAppView(doc) && !doc.edit?.untitled ? doc.path.replace(/[\\/][^\\/]*$/, "") : undefined;
+  const folder = await openDialog({ directory: true, title: "Lint folder", defaultPath: lastFolder ?? docFolder });
+  if (typeof folder === "string") await lintFolder(folder);
+}
+
+/** Lints every Markdown file in a folder and shows the report in its tab. */
+async function lintFolder(root: string): Promise<void> {
+  if (!settings.linting.enabled) {
+    await message("Linting is turned off in Settings → Linting.", { title: "Lint folder", kind: "info" });
+    return;
+  }
+  showToast("Linting the folder…");
+  const report = await invoke<FolderLint>("lint_folder", { root });
+  const name = report.root.split(/[\\/]/).filter(Boolean).pop() ?? report.root;
+  const path = lintReportPath(report.root);
+  const tab: OpenDocument = { path, title: `Lint: ${name}`, html: "", lintReport: report };
+  const open = state.tabs.some((t) => t.path === path);
+  setState(open ? activateTab(updateTab(state, tab), state.tabs.findIndex((t) => t.path === path)) : openTab(state, tab));
+  const total = report.files.reduce((sum, f) => sum + f.total, 0);
+  showToast(total === 0 ? "No lint issues" : `${total} lint issue${total === 1 ? "" : "s"}`);
+}
+
+function renderReport(report: FolderLint): void {
+  renderLintReport(reportView, report, lintRules, {
+    open: (path, line, column) => void openAtLine(path, line, column).catch(reportError),
+    rerun: () => void lintFolder(report.root).catch(reportError),
+  });
+}
+
+/** Opens a file (or switches to its tab) and puts the editor's cursor on a line. */
+async function openAtLine(path: string, line: number, column: number): Promise<void> {
+  const open = state.tabs.findIndex((t) => !isAppView(t) && t.path.toLowerCase() === path.toLowerCase());
+  if (open >= 0) setState(activateTab(state, open));
+  else await openPaths([path]);
+  const doc = activeTab(state);
+  if (!doc || doc.path.toLowerCase() !== path.toLowerCase()) return;
+  if (modeOf(doc) === "preview") await setMode(settings.editor.defaultMode === "edit" ? "edit" : "split");
+  editor.goTo(doc.path, line, column);
 }
 
 function editorOptions(): EditorOptions {
@@ -1267,7 +1338,7 @@ function openSettings(): void {
 /** Renders every open tab again (after a rendering setting changed). */
 async function reloadAllTabs(): Promise<void> {
   for (const tab of state.tabs) {
-    if (tab.settings) continue;
+    if (isAppView(tab)) continue;
     if (tab.wiki) {
       const latest = state.tabs.find((t) => t.path === tab.path)?.wiki ?? tab.wiki;
       const reloaded = { ...(await loadWikiTab(latest.info.root, latest.page.path, latest.history)), path: tab.path };
@@ -1939,7 +2010,7 @@ function stepZoom(direction: 1 | -1): void {
 
 /** Print / Save as PDF (the print stylesheet shows just the document, in light colours). */
 function printDocument(): void {
-  if (!shown || shown.settings) return;
+  if (!shown || isAppView(shown)) return;
   window.print();
 }
 
@@ -1983,6 +2054,9 @@ function runCommand(command: Command): void {
       break;
     case "lint-panel":
       run(showProblems());
+      break;
+    case "lint-folder":
+      run(chooseFolderToLint());
       break;
     case "lint-fix-all": {
       const doc = activeTab(state);

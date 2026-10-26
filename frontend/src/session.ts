@@ -1,6 +1,6 @@
 // The open tabs, saved so they can be reopened on the next start.
 
-import { activateTab, emptyTabs, openTab, type OpenDocument, type TabState } from "./tabs";
+import { activateTab, emptyTabs, isAppView, openTab, type OpenDocument, type TabState } from "./tabs";
 
 export type SessionTab = { kind: "document"; path: string } | { kind: "wiki"; root: string; page: string };
 
@@ -13,13 +13,13 @@ export interface Session {
 export function toSession(state: TabState): Session {
   return {
     tabs: state.tabs
-      .filter((tab) => !tab.settings && !tab.edit?.untitled)
+      .filter((tab) => !isAppView(tab) && !tab.edit?.untitled)
       .map((tab) =>
         tab.wiki
           ? { kind: "wiki", root: tab.wiki.info.root, page: tab.wiki.page.path }
           : { kind: "document", path: tab.path },
       ),
-    active: state.tabs[state.activeIndex]?.settings ? null : (state.tabs[state.activeIndex]?.path ?? null),
+    active: isAppView(state.tabs[state.activeIndex]) ? null : (state.tabs[state.activeIndex]?.path ?? null),
   };
 }
 

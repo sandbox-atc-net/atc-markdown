@@ -1,5 +1,6 @@
 // Pure tab state. No DOM or Tauri here, so it is easy to unit test.
 
+import type { FolderLint } from "./lint-report-view";
 import type { WikiView } from "./wiki";
 
 /** Editing state of a document tab (the text itself lives in the editor). */
@@ -31,9 +32,15 @@ export interface OpenDocument {
   wikiRoot?: string;
   /** Set on the Settings tab (not saved in the session). */
   settings?: true;
+  /** Set on a lint report tab: the issues of a folder (not saved in the session). */
+  lintReport?: FolderLint;
   /** Set once a document tab has been opened in the editor. */
   edit?: EditInfo;
 }
+
+/** True for the app's own tabs (Settings, lint reports), which show no document. */
+export const isAppView = (doc: OpenDocument | undefined): boolean =>
+  doc !== undefined && (doc.settings === true || doc.lintReport !== undefined);
 
 /** Ids of new, unsaved files start with this. */
 export const UNTITLED_PREFIX = "untitled:";
