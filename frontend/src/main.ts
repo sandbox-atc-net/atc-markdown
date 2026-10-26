@@ -1494,7 +1494,10 @@ function scheduleWikiSearch(): void {
 /** Opens a search result and highlights the text with Find. */
 async function openSearchHit(hit: SearchHit, query: string): Promise<void> {
   await goToWikiPage(hit.page.path);
-  findInput.value = query;
+  // The words can be apart on the page: highlight the one the snippet shows.
+  const text = hit.snippet?.hit ?? (/[\s"]/.test(query.trim()) ? undefined : query);
+  if (!text) return;
+  findInput.value = text;
   openFind();
   scrollToCurrentMatch();
 }

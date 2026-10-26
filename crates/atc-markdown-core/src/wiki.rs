@@ -129,6 +129,24 @@ pub struct Snippet {
 
 /// Some text either side of a match (more after than before, so the match
 /// stays visible in a two-line preview), on one line, without Markdown noise.
+/// The lowercase terms of a search: words, and `"quoted phrases"` as one term.
+/// One-letter words are dropped (they match nearly every page).
+fn search_terms(query: &str) -> Vec<String> {
+    let mut terms: Vec<String> = Vec::new();
+    for (i, part) in query.split('"').enumerate() {
+        let part = part.trim().to_lowercase();
+        if i % 2 == 1 {
+            terms.push(part); // inside quotes
+        } else {
+            terms.extend(part.split_whitespace().map(str::to_owned));
+        }
+    }
+    terms.retain(|t| t.chars().count() >= 2);
+    terms.sort();
+    terms.dedup();
+    terms
+}
+
 fn snippet(text: &str, lower: &str, at: usize, len: usize) -> Option<Snippet> {
     // `to_lowercase` can change byte lengths; only use offsets that line up.
     if lower.len() != text.len() || !text.is_char_boundary(at) || !text.is_char_boundary(at + len) {
@@ -447,27 +465,38 @@ impl Wiki {
         })
     }
 
-    /// Searches the text of every page, case-insensitively. Pages whose title
-    /// matches come first, then by number of matches. At most `limit` results.
+    /// Searches the text of every page, case-insensitively. Every word of the
+    /// query must occur (in any order; `"quoted words"` as a phrase), in the
+    /// text or the title. Pages whose title has them all come first, then by
+    /// number of matches. At most `limit` results.
     pub fn search(&self, query: &str, limit: usize) -> Vec<SearchHit> {
-        let needle = query.trim().to_lowercase();
-        if needle.chars().count() < 2 {
+        let terms = search_terms(query);
+        if terms.is_empty() {
             return Vec::new();
         }
+        // The snippet shows the most specific (longest) term found in the text.
+        let mut by_length = terms.clone();
+        by_length.sort_by_key(|t| std::cmp::Reverse(t.chars().count()));
         let mut hits: Vec<(bool, usize, SearchHit)> = self
             .pages
             .iter()
             .filter_map(|page| {
                 let text = fs::read_to_string(&page.path).ok()?;
                 let lower = text.to_lowercase();
-                let count = lower.matches(&needle).count();
-                let in_title = page.title.to_lowercase().contains(&needle);
-                if count == 0 && !in_title {
-                    return None;
+                let title = page.title.to_lowercase();
+                let mut count = 0;
+                for term in &terms {
+                    let n = lower.matches(term.as_str()).count();
+                    if n == 0 && !title.contains(term.as_str()) {
+                        return None;
+                    }
+                    count += n;
                 }
-                let snippet = lower
-                    .find(&needle)
-                    .and_then(|at| snippet(&text, &lower, at, needle.len()));
+                let in_title = terms.iter().all(|t| title.contains(t.as_str()));
+                let snippet = by_length.iter().find_map(|term| {
+                    let at = lower.find(term.as_str())?;
+                    snippet(&text, &lower, at, term.len())
+                });
                 Some((
                     in_title,
                     count,
@@ -835,6 +864,56 @@ mod tests {
         assert_eq!(overlays.snippet.as_ref().unwrap().hit, "Apply");
         assert_eq!(wiki.search("x", 10), Vec::new(), "too short");
         assert_eq!(wiki.search("nothing-like-this", 10), Vec::new());
+    }
+
+    #[test]
+    fn search_needs_every_word_in_any_order_and_keeps_quoted_phrases() {
+        let wiki = fixture("search-words");
+        let names = |query: &str| -> Vec<String> {
+            let mut names: Vec<_> = wiki
+                .search(query, 10)
+                .into_iter()
+                .map(|h| h.page.name)
+                .collect();
+            names.sort();
+            names
+        };
+        // Overlays: "with" from the title, "apply" from the text; Home has both in links.
+        assert_eq!(names("apply with"), ["Home", "Working-with-Overlays"]);
+        assert_eq!(names("APPLY overlays"), ["Home", "Working-with-Overlays"]);
+        assert_eq!(names("apply client"), ["Home"]);
+        // No page has both words (the footer is not a page).
+        assert_eq!(names("apply footer"), Vec::<String>::new());
+        // Words in any order; a phrase must be as written.
+        assert_eq!(names("started getting"), ["Getting-Started", "Home"]);
+        assert_eq!(names("\"getting started\""), ["Getting-Started", "Home"]);
+        assert_eq!(names("\"started getting\""), Vec::<String>::new());
+        // The snippet shows the longest word.
+        let hits = wiki.search("w overlays apply", 10);
+        let overlays = hits
+            .iter()
+            .find(|h| h.page.name == "Working-with-Overlays")
+            .unwrap();
+        // "overlays" is the longest word, but only in the title: the snippet shows "apply".
+        assert_eq!(overlays.snippet.as_ref().unwrap().hit, "Apply");
+        let hits = wiki.search("w apply", 10);
+        let overlays = hits
+            .iter()
+            .find(|h| h.page.name == "Working-with-Overlays")
+            .unwrap();
+        assert_eq!(overlays.snippet.as_ref().unwrap().hit, "Apply");
+    }
+
+    #[test]
+    fn splits_search_terms() {
+        assert_eq!(search_terms("  Foo  bar "), ["bar", "foo"]);
+        assert_eq!(
+            search_terms("a \"Getting Started\" x go"),
+            ["getting started", "go"]
+        );
+        assert_eq!(search_terms("\"unclosed phrase"), ["unclosed phrase"]);
+        assert_eq!(search_terms("a b"), Vec::<String>::new());
+        assert_eq!(search_terms("dup DUP"), ["dup"]);
     }
 
     #[test]
