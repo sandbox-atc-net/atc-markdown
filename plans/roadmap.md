@@ -392,7 +392,7 @@ Decision: rule names, config format and defaults follow the JS markdownlint (wha
 - ✅ MD046 fix: indented → fenced (same rendering: unit tests per layout — list, quote, quote in list, blank lines, backtick fences inside — and 200,000 generated documents); not offered for a tab right after the indent or code on a list marker line. Fenced → indented is not offered (it would lose the language and leading/trailing blank lines)
 - ✅ Not auto-fixable (need a human): MD001, MD002, MD006, MD013, MD024, MD025, MD028, MD033, MD036, MD041; MD040 only when the first line tells the language (`#!/bin/bash`, `#!/usr/bin/env python3`, `<?xml`, `<!DOCTYPE html`, `<?php`, `@echo off`)
 - 🚧 MD040 pick-list of languages: the fence names the preview's highlighter knows (≈200, popular first, grammar shown beside each) are completed while typing after an opening fence (Ctrl+Space right after the backticks), and the MD040 issue has a "Language…" button that opens the list — built, not yet checked on screen
-- ⬜ Preview of a "Fix all" as a diff before applying
+- 🚧 Preview of a "Fix all" (file or one rule) as a diff before applying: a dialog with the changed lines in red/green, two lines of context, old and new line numbers, tabs and trailing spaces made visible, and a summary ("12 issues: MD009 × 8, MD012 × 4"); Apply / Cancel (Escape). On by default (Settings → Linting → Preview fixes); fix-on-save and the single "Fix" button apply directly — built, not yet checked on screen
 
 **Tests**
 - ✅ Per rule: the bad and good example of every rule from RULES.md, plus targeted cases (positions, UTF-16 offsets with æøå/emoji, code spans across lines, alerts, front matter, wiki pages, suppressions)
