@@ -200,7 +200,8 @@ fn convert_heading(ctx: &Ctx<'_>, h: &Heading, to: &str) -> Option<Vec<TextEdit>
             let mark = if h.level == 1 { "=" } else { "-" };
             let prefix = super::super::context::quote_prefix(line);
             format!(
-                "{text}\n{prefix}{}",
+                "{text}{}{prefix}{}",
+                ctx.eol(),
                 mark.repeat(text.chars().count().max(3))
             )
         }

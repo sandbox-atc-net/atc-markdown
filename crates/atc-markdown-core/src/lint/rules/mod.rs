@@ -208,7 +208,7 @@ pub(super) const RULES: &[RuleInfo] = &[
         "MD040",
         "fenced-code-language",
         "Fenced code blocks should have a language specified",
-        false,
+        true,
     ),
     rule(
         "MD041",
@@ -216,7 +216,7 @@ pub(super) const RULES: &[RuleInfo] = &[
         "First line in a file should be a top-level heading",
         false,
     ),
-    rule("MD046", "code-block-style", "Code block style", false),
+    rule("MD046", "code-block-style", "Code block style", true),
     rule(
         "MD047",
         "single-trailing-newline",

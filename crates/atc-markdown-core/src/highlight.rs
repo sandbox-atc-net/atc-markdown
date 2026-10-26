@@ -175,6 +175,206 @@ pub fn code_language(fence: &str) -> Option<&'static str> {
         .filter(|name| *name != "Plain Text")
 }
 
+/// A fence name to offer when choosing a code block's language.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct FenceLanguage {
+    /// What goes after the backticks, e.g. `csharp`.
+    pub name: String,
+    /// The grammar it selects, e.g. `C#` (`Plain text` for `text`).
+    pub label: &'static str,
+}
+
+/// The fence names offered first, roughly by how often they appear in docs.
+const POPULAR_FENCES: &[&str] = &[
+    "bash",
+    "csharp",
+    "json",
+    "yaml",
+    "xml",
+    "powershell",
+    "text",
+    "typescript",
+    "javascript",
+    "html",
+    "css",
+    "sql",
+    "python",
+    "markdown",
+    "mermaid",
+    "dockerfile",
+    "java",
+    "go",
+    "rust",
+    "cpp",
+    "c",
+    "ini",
+    "toml",
+    "diff",
+];
+
+/// Fence names that are not a grammar: shown as plain text on purpose, or
+/// drawn by the app (Mermaid diagrams).
+const SPECIAL_FENCES: &[(&str, &str)] = &[
+    ("text", "Plain text"),
+    ("txt", "Plain text"),
+    ("plaintext", "Plain text"),
+    ("mermaid", "Mermaid diagram"),
+];
+
+/// Short names people type, so completing them doesn't swap in the long name.
+const SHORT_FENCES: &[&str] = &["sh", "cs", "js", "ts", "py", "rb", "rs", "md", "yml", "kt"];
+
+static FENCE_LANGUAGES: LazyLock<Vec<FenceLanguage>> = LazyLock::new(|| {
+    let mut list: Vec<FenceLanguage> = Vec::new();
+    let mut add = |name: &str| {
+        let special = SPECIAL_FENCES.iter().find(|(n, _)| *n == name);
+        let label = special
+            .map(|(_, label)| *label)
+            .or_else(|| code_language(name));
+        if let Some(label) = label
+            && !list.iter().any(|l| l.name == name)
+        {
+            list.push(FenceLanguage {
+                name: name.to_owned(),
+                label,
+            });
+        }
+    };
+    let special = SPECIAL_FENCES.iter().map(|(name, _)| name);
+    let aliases = ALIASES.iter().map(|(name, _)| name);
+    for name in POPULAR_FENCES
+        .iter()
+        .chain(special)
+        .chain(SHORT_FENCES)
+        .chain(aliases)
+    {
+        add(name);
+    }
+    let mut syntaxes: Vec<_> = SYNTAXES
+        .syntaxes()
+        .iter()
+        .filter(|s| !NOT_FOR_DOCS.contains(&s.name.as_str()))
+        .collect();
+    syntaxes.sort_by_key(|s| s.name.to_lowercase());
+    for syntax in syntaxes {
+        // The grammar's own name (`lua`) or else its first file extension
+        // (`rb`), whichever selects that grammar.
+        let own_name = syntax.name.to_lowercase();
+        let candidates = std::iter::once(own_name)
+            .chain(syntax.file_extensions.first().map(|ext| ext.to_lowercase()));
+        for name in candidates {
+            let usable = !name.is_empty()
+                && !name.contains(['/', '.', ' ', '(', ')'])
+                && code_language(&name) == Some(syntax.name.as_str());
+            if usable {
+                add(&name);
+                break;
+            }
+        }
+    }
+    list
+});
+
+/// Grammars for system files and tool output, not languages people put in docs.
+const NOT_FOR_DOCS: &[&str] = &[
+    "Authorized Keys",
+    "Command Help",
+    "CpuInfo",
+    "MemInfo",
+    "fstab",
+    "group",
+    "passwd",
+    "Highlight non-printables",
+    "Hosts File",
+    "Known Hosts",
+    "syslog",
+    "Strace",
+    "Git Attributes",
+    "Git Commit",
+    "Git Ignore",
+    "Git Link",
+    "Git Log",
+    "Git Mailmap",
+    "Git Rebase Todo",
+    "NAnt Build File",
+    "Rd (R Documentation)",
+    "varlink",
+    "camlp4",
+    "CMakeCache",
+    "CMakeCommands",
+    "commands-builtin-shell-bash",
+    "debsources",
+    "MediawikerPanel",
+    "resolv",
+    "Shell-Unix-Generic",
+    "TestBox",
+    "Javadoc",
+    "Apache Conf",
+    "Fortran Namelist",
+    "HTML (Erlang)",
+    "HTML (Rails)",
+    "HTML (Tcl)",
+    "Ruby on Rails",
+    "SQL (Rails)",
+];
+
+/// Interpreters named in a `#!` line, and the fence name for them.
+const SHEBANGS: &[(&str, &str)] = &[
+    ("sh", "bash"),
+    ("bash", "bash"),
+    ("zsh", "bash"),
+    ("ksh", "bash"),
+    ("dash", "bash"),
+    ("fish", "fish"),
+    ("python", "python"),
+    ("node", "javascript"),
+    ("deno", "typescript"),
+    ("pwsh", "powershell"),
+    ("powershell", "powershell"),
+    ("ruby", "ruby"),
+    ("perl", "perl"),
+    ("php", "php"),
+    ("lua", "lua"),
+    ("dotnet-script", "csharp"),
+];
+
+/// Fence names the highlighter knows, popular ones first.
+pub fn fence_languages() -> &'static [FenceLanguage] {
+    &FENCE_LANGUAGES
+}
+
+/// A fence name for code whose first line gives its language away (a shebang
+/// such as `#!/bin/bash`, `<?xml`, `<?php`), or `None` if it doesn't.
+pub fn guess_fence_language(code: &str) -> Option<&'static str> {
+    let first = code.trim_start().lines().next()?.trim();
+    let lower = first.to_ascii_lowercase();
+    if let Some(shebang) = first.strip_prefix("#!") {
+        // `#!/usr/bin/env python3 -u` → `python`; `#!/bin/bash` → `bash`.
+        let mut words = shebang.split_whitespace();
+        let mut program = words.next()?.rsplit('/').next()?;
+        if program == "env" {
+            program = words.find(|w| !w.starts_with('-'))?;
+        }
+        let program = program.trim_end_matches(|c: char| c.is_ascii_digit() || c == '.');
+        return SHEBANGS
+            .iter()
+            .find(|(name, _)| *name == program)
+            .map(|(_, fence)| *fence);
+    }
+    let fence = if lower.starts_with("<?xml") {
+        "xml"
+    } else if lower.starts_with("<!doctype html") || lower.starts_with("<html") {
+        "html"
+    } else if lower.starts_with("<?php") {
+        "php"
+    } else if lower == "@echo off" {
+        "batch"
+    } else {
+        return None;
+    };
+    Some(fence)
+}
+
 /// A choice of code colours: one theme for light mode and one for dark mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -416,5 +616,49 @@ mod tests {
         assert_eq!(code_language("no-such-language"), None);
         assert_eq!(code_language("text"), None);
         assert_eq!(code_language(""), None);
+    }
+
+    #[test]
+    fn fence_languages_are_unique_and_select_their_grammar() {
+        let list = fence_languages();
+        assert_eq!(list[0].name, "bash");
+        assert!(list.len() > 150);
+        let mut names: Vec<_> = list.iter().map(|l| l.name.as_str()).collect();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), list.len());
+        for l in list {
+            let special = SPECIAL_FENCES.iter().any(|(name, _)| *name == l.name);
+            let expected = (!special).then_some(l.label);
+            assert_eq!(code_language(&l.name), expected, "{}", l.name);
+        }
+        for name in ["mermaid", "py", "yml", "md", "rb", "js"] {
+            assert!(list.iter().any(|l| l.name == name), "{name}");
+        }
+        assert!(
+            !list
+                .iter()
+                .any(|l| l.label == "passwd" || l.label == "Git Ignore")
+        );
+    }
+
+    #[test]
+    fn guesses_the_language_only_from_telling_first_lines() {
+        let guess = guess_fence_language;
+        assert_eq!(guess("#!/bin/bash\necho hi"), Some("bash"));
+        assert_eq!(guess("\n#!/usr/bin/env python3 -u\n"), Some("python"));
+        assert_eq!(guess("#!/usr/bin/env -S deno run"), Some("typescript"));
+        assert_eq!(guess("#!/usr/bin/python3.11"), Some("python"));
+        assert_eq!(guess("#!/usr/bin/env pwsh"), Some("powershell"));
+        assert_eq!(guess("<?xml version=\"1.0\"?>\n<a/>"), Some("xml"));
+        assert_eq!(guess("<!DOCTYPE html>\n<html>"), Some("html"));
+        assert_eq!(guess("@ECHO OFF"), Some("batch"));
+        assert_eq!(guess("#!/usr/bin/awkward"), None);
+        assert_eq!(guess("{ \"a\": 1 }"), None);
+        assert_eq!(guess("using System;"), None);
+        assert_eq!(guess(""), None);
+        for name in SHEBANGS.iter().map(|(_, fence)| fence) {
+            assert!(code_language(name).is_some(), "{name}");
+        }
     }
 }

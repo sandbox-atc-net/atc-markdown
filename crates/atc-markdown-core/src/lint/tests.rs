@@ -463,3 +463,94 @@ fn app_defaults_are_quiet_on_a_tidy_document() {
     let found = lint(text, &LintConfig::app_defaults(), false);
     assert_eq!(found, NONE, "{found:#?}");
 }
+
+#[test]
+fn md046_fix_turns_indented_code_into_fenced_code_with_the_same_rendering() {
+    let config = only("MD046", json!({ "style": "fenced" }));
+    let cases = [
+        (
+            "text\n\n    code\n    more\n",
+            "text\n\n```\ncode\nmore\n```\n",
+        ),
+        ("text\n\n    code", "text\n\n```\ncode\n```"),
+        (
+            "text\r\n\r\n    code\r\n",
+            "text\r\n\r\n```\r\ncode\r\n```\r\n",
+        ),
+        (
+            "- item\n\n      code\n\n      more\n",
+            "- item\n\n  ```\n  code\n\n  more\n  ```\n",
+        ),
+        (
+            "> a\n>\n>     code\n>     more\n",
+            "> a\n>\n> ```\n> code\n> more\n> ```\n",
+        ),
+        (
+            "- item\n\n  > a\n  >\n  >     code\n",
+            "- item\n\n  > a\n  >\n  > ```\n  > code\n  > ```\n",
+        ),
+        (
+            "a\n\n      deep\n    flat\n",
+            "a\n\n```\n  deep\nflat\n```\n",
+        ),
+        (
+            "a\n\n    one\n      \n    two\n",
+            "a\n\n```\none\n  \ntwo\n```\n",
+        ),
+        (
+            "a\n\n    ```js\n    x\n    ````\n",
+            "a\n\n`````\n```js\nx\n````\n`````\n",
+        ),
+        ("a\n\n    code\nafter\n", "a\n\n```\ncode\n```\nafter\n"),
+    ];
+    for (before, after) in cases {
+        let fixed = fix_all(before, &config, false);
+        assert_eq!(fixed, after, "{before:?}");
+        assert_eq!(
+            crate::render_markdown(&fixed).as_str(),
+            crate::render_markdown(before).as_str(),
+            "{before:?}"
+        );
+        assert_eq!(lint(&fixed, &config, false), NONE, "{fixed:?}");
+    }
+
+    // Left alone: tabs in the indent, code on the list marker line, fenced → indented.
+    for text in ["a\n\n\tcode\n", "1. a\n\n      \tcode\n", "-     code\n"] {
+        assert!(
+            lint(text, &config, false).iter().all(|i| i.fix.is_none()),
+            "{text:?}"
+        );
+    }
+    let indented = only("MD046", json!({ "style": "indented" }));
+    assert!(lint("```\ncode\n```\n", &indented, false)[0].fix.is_none());
+}
+
+#[test]
+fn fixes_keep_crlf_line_breaks() {
+    assert_eq!(fixed("MD022", "# A\r\ntext\r\n"), "# A\r\n\r\ntext\r\n");
+    assert_eq!(
+        fixed("MD031", "a\r\n```\r\nx\r\n```\r\nb\r\n"),
+        "a\r\n\r\n```\r\nx\r\n```\r\n\r\nb\r\n"
+    );
+    assert_eq!(fixed("MD047", "a\r\nb"), "a\r\nb\r\n");
+}
+
+#[test]
+fn md040_fix_adds_the_language_only_when_the_first_line_tells_it() {
+    assert_eq!(
+        fixed("MD040", "```\n#!/bin/bash\nls\n```\n"),
+        "```bash\n#!/bin/bash\nls\n```\n"
+    );
+    assert_eq!(
+        fixed("MD040", "> ~~~~ \n> <?xml version=\"1.0\"?>\n> ~~~~\n"),
+        "> ~~~~xml \n> <?xml version=\"1.0\"?>\n> ~~~~\n"
+    );
+    assert_eq!(
+        fixed("MD040", "- a\n\n  ```\n  #!/usr/bin/env python3\n  ```\n"),
+        "- a\n\n  ```python\n  #!/usr/bin/env python3\n  ```\n"
+    );
+    for text in ["```\nls -la\n```\n", "```\n```\n", "```\n"] {
+        assert_eq!(issues("MD040", text).len(), 1, "{text:?}");
+        assert_eq!(fixed("MD040", text), text);
+    }
+}

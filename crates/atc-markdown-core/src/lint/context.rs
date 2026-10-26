@@ -521,7 +521,7 @@ impl<'a> Ctx<'a> {
         TextEdit {
             start: self.offset(line, 0),
             end: self.offset(line, 0),
-            insert: format!("{}\n", prefix.trim_end()),
+            insert: format!("{}{}", prefix.trim_end(), self.eol()),
         }
     }
 
@@ -533,12 +533,20 @@ impl<'a> Ctx<'a> {
         TextEdit {
             start: end,
             end,
-            insert: format!("\n{}", prefix.trim_end()),
+            insert: format!("{}{}", self.eol(), prefix.trim_end()),
         }
     }
 
     pub fn line_count(&self) -> usize {
         self.lines.len()
+    }
+
+    /// The line break the text uses (`\r\n` if its first line ends with one).
+    pub fn eol(&self) -> &'static str {
+        match self.text.find('\n') {
+            Some(i) if self.text[..i].ends_with('\r') => "\r\n",
+            _ => "\n",
+        }
     }
 }
 

@@ -22,7 +22,8 @@ pub use document::{
     Document, DocumentError, MAX_DOCUMENT_BYTES, load_document, load_document_with,
 };
 pub use highlight::{
-    CODE_THEMES, CodeTheme, code_language, code_theme, highlight_css, highlight_css_for, warm_up,
+    CODE_THEMES, CodeTheme, FenceLanguage, code_language, code_theme, fence_languages,
+    guess_fence_language, highlight_css, highlight_css_for, warm_up,
 };
 pub use links::{
     LinkPreview, LinkTarget, MARKDOWN_EXTENSIONS, describe_link, is_markdown_file, preview_target,

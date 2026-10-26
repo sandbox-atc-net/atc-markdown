@@ -166,6 +166,6 @@ pub(super) fn md047(ctx: &Ctx<'_>, _: &Params<'_>, out: &mut Vec<Issue>) {
         len,
         "Files should end with a single newline character",
     );
-    issue.fix = Some(vec![ctx.edit(line, len, len, "\n")]);
+    issue.fix = Some(vec![ctx.edit(line, len, len, ctx.eol())]);
     out.push(issue);
 }
