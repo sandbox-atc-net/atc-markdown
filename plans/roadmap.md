@@ -287,7 +287,7 @@ UX: **Settings** opens as its own tab (Edit → Settings…, Ctrl+, / macOS: app
 | | Reading width | Medium (900 px) · Narrow · Wide · Full window |
 | | Reading font | System sans · Serif · Custom font name |
 | | Code font | System monospace · Custom font name |
-| Wiki | Sidebar position | **Left** · Right |
+| Layout | Side panel position (was Wiki → Sidebar position; since Phase 2.3 it also places the Explorer) | **Left** · Right |
 | | Sidebar shown when a wiki opens | On · Off |
 | | Page list ("Pages (N)") | Collapsed · Expanded · Hidden |
 | | Page header (title, last edited, GitHub link) | On · Off |
@@ -438,7 +438,18 @@ Goal: open pages of an Azure DevOps wiki (project wiki or code wiki) straight fr
 
 ### Phase 2.3 – Folder mode (Explorer panel like VS Code)
 
+Status 2026-10-27: implemented, unit-tested and checked in the app (dev build, this repo as the folder): Explorer and compact folders, preview tabs (click replaces, double-click keeps), active file highlight, filter + full-text search, live tree updates when a folder with a `.md` is added and removed, side panel moved right with the outline on the left, Ctrl+B for the Explorer and the wiki sidebar, right-click → Open as Wiki, session restore of the folder, expanded folders and tabs, and wiki/folder routing. Found and fixed on screen: the first click in the tree was lost (focus redrew the rows). 🚧 = built, not yet checked on screen.
+
 Goal: as a user I open any folder (e.g. `D:\Code\atc-net\atc-markdown`) and get a file/folder panel at the side of the window, like the Explorer in Visual Studio Code, that shows only the Markdown files and the folders that lead to them. Clicking a file opens it in a tab, so I can browse and edit a whole docs folder or repo without File → Open for each file.
+
+**Decisions (2026-10-27, POC — refactoring existing code is fine)**
+- **One "Open Folder" command.** File → Open Wiki Folder… is renamed to File → Open Folder… and keeps Ctrl/Cmd+Shift+O. It checks the folder: a GitHub wiki opens in wiki mode, any other folder opens in folder mode. Drag & drop and the command-line argument follow the same rule. No second shortcut to learn.
+- **The Explorer belongs to the window; files open as normal tabs.** This is how VS Code works and keeps every existing tab feature (editor, lint, outline, session restore) working unchanged. Wiki mode stays one tab, because its sidebar is the rendered `_Sidebar.md`, not a file tree.
+- **One shared folder scanner in Rust.** The tree builder, the skip rules (hidden folders, `node_modules`, `.gitignore`) and the folder watcher move into one core module used by folder mode, the wiki page list and View → Lint Folder…. Today each has its own scan; they are refactored onto the shared one.
+- **One side-panel position setting.** "Wiki → Sidebar position" becomes "Layout → Side panel position" (Left · Right) and places both the wiki sidebar and the Explorer; the old value is migrated on first start. The outline panel always goes on the opposite side, so the two never overlap.
+- **Ctrl/Cmd+B toggles the side panel of the current view:** the Explorer in a folder window, the wiki sidebar in a wiki tab.
+- **Preview tabs on by default** (single click replaces, double-click keeps), with a setting to turn them off.
+- **Only Markdown files** are shown — the same extensions the app opens (`.md`, `.markdown`, `.mdown`, `.mkd`); `*.mdx` is left out (JSX the viewer cannot render).
 
 ```
 ┌ Tabs: [README.md] [roadmap.md] [CHANGELOG.md] ─────────────────────────────┐
@@ -456,61 +467,73 @@ Goal: as a user I open any folder (e.g. `D:\Code\atc-net\atc-markdown`) and get 
 ```
 
 **Opening**
-- ⬜ File → Open Folder… (Ctrl/Cmd+K Ctrl/Cmd+O, as in VS Code); drag a folder onto the window; folder path as command-line argument
-- ⬜ One open folder per window; opening another folder replaces it (File → Close Folder closes the panel); recent folders on the start page next to recent files and wikis
-- ⬜ Opening a folder that is a GitHub wiki (same detection as Phase 1.7) opens wiki mode instead; an info bar offers "Open as folder" for the other way round
+- ✅ File → Open Folder… (Ctrl/Cmd+Shift+O, replaces Open Wiki Folder…); drag a folder onto the window; folder path as command-line argument; "Open folder…" on the start page
+- ✅ One open folder per window; opening another folder replaces it (File → Close Folder, or × in the Explorer header, closes the panel; tabs stay); recent folders (📁) on the start page next to recent files and wikis
+- ✅ A folder that is a GitHub wiki (same detection as Phase 1.7) opens in wiki mode; the wiki header has "📁 Open as folder" (the folder in the Explorer, the page as a normal tab), and right-click → "Open as Wiki" works on any folder in the tree (wiki folders are marked 📚)
 - ⬜ Later (installer): Explorer/Finder context menu "Open folder with Atc.Markdown"
 
 **Tree**
-- ⬜ Shows every `*.md` file (also `*.markdown`) and only those folders that contain a Markdown file somewhere below them; empty folders and folders with only other files are hidden
-- ⬜ Sorted like VS Code: folders first, then files, each alphabetically (case-insensitive, natural order so `2-x` comes before `10-x`)
-- ⬜ Folders expand/collapse with a click or ▸/▾; expanded state remembered per folder; "Collapse all" (⊟) and "Refresh" (⟳) buttons in the panel header
-- ⬜ Single folders in a chain shown compact (`docs/guides/api` on one row), like VS Code's compact folders — setting, on by default
-- ⬜ Skipped: hidden folders (`.git`, `.vs`, …), `node_modules`, `bin`, `obj`, `target` and paths ignored by `.gitignore` (setting); the same rules as View → Lint Folder…
-- ⬜ Large folders: the tree is scanned in Rust in the background and shown as soon as the first level is ready; at most 5,000 files (a note says when the limit is hit)
+- ✅ Shows every Markdown file (the app's extensions: `.md`, `.markdown`, `.mdown`, `.mkd`) and only those folders that contain one somewhere below them; empty folders and folders with only other files are hidden
+- ✅ Sorted like VS Code: folders first, then files, case-insensitive, natural order (`2-x` before `10-x`)
+- ✅ Folders expand/collapse with a click or ▸/▾; expanded folders remembered in the session; "Collapse all" (⊟) and "Refresh" (⟳) buttons in the panel header
+- ✅ Compact folders (`docs/guides/api` on one row) — setting, on by default
+- ✅ Skipped: hidden files and folders (`.git`, `.vs`, `.github`, …), `node_modules`, `bin`, `obj`, `target` (editable list) and what `.gitignore` / `.ignore` / `.git/info/exclude` ignore (setting; also without a git repository); the same rules for folder search and Lint Folder…
+- 🚧 Large folders: scanned in Rust off the main thread; at most 5,000 files, with a note when the limit is hit. Not done: showing the first level before the whole scan is finished
+- ✅ Symlinks and junctions are never followed (a link to a file or folder is left out)
 
 **Opening files**
-- ⬜ Click opens the file in a *preview tab* (title in italics) that the next click replaces, like VS Code; double-click, editing the file or double-clicking the tab keeps it open as a normal tab. Setting to turn preview tabs off (every click opens a new tab)
-- ⬜ Ctrl/Cmd+click or middle-click opens in a new tab in the background; Enter opens the selected file
-- ⬜ A file that is already open switches to its tab instead of opening it twice
-- ⬜ The file of the active tab is highlighted in the tree, and its folders expand and scroll into view (setting "Reveal active file", on by default)
-- ⬜ Relative links between Markdown files in the folder (`[x](../guides/setup.md)`) open in the same way as a click in the tree
+- ✅ Click opens the file in a *preview tab* (title in italics) that the next click replaces; double-click on the file or the tab, Enter, or editing the file keeps it open. Setting to turn preview tabs off
+- 🚧 Ctrl/Cmd+click or middle-click opens in a new tab in the background
+- ✅ A file that is already open switches to its tab instead of opening it twice
+- ✅ The active tab's file is highlighted in the tree, and its folders expand and scroll into view (setting "Reveal the active file", on by default)
+- 🚧 Links to Markdown files inside the open folder open like a click in the tree (preview tab; Ctrl+click: background tab)
 
 **Panel**
-- ⬜ Panel at the left or right side of the window (setting), resizable splitter (width remembered), toggle with Ctrl/Cmd+B (View → Explorer; in a wiki tab Ctrl/Cmd+B keeps toggling the wiki sidebar); shares the side with the outline panel without overlapping it
-- ⬜ Keyboard: ↑/↓ move, →/← expand/collapse, Enter opens, type letters to jump to a matching name
-- ⬜ Filter box at the top ("Filter files…") narrows the tree to matching file names and keeps their parent folders
-- ⬜ Right-click on a file or folder: Open in New Tab · Reveal in Explorer/Finder · Copy Path · Copy Relative Path · Lint Folder… (later: New File, Rename, Delete)
-- ⬜ Find in folder (Ctrl/Cmd+Shift+F): full-text search across all files in the tree, same search rules and snippets as the wiki search
+- ✅ Shared side panel at the left or right ("Layout → Side panel position"), resizable splitter (width remembered), Ctrl/Cmd+B (View → Explorer / Wiki Sidebar) toggles the Explorer, or the wiki sidebar in a wiki tab; the outline panel is on the opposite side; each keeps its own scroll position
+- 🚧 Keyboard: ↑/↓, Home/End move; → opens a folder / moves into it; ← closes it / moves to the parent; Enter opens (kept), Space opens as preview; letters jump to a matching name (repeat a letter to cycle); Shift+F10 / Menu key opens the context menu
+- ✅ Filter box at the top: every word must occur in the file's path; the tree keeps the parent folders, opened; "N of M files"; Enter opens the first match, ↓ goes into the tree, Escape clears
+- ✅ Right-click: Open · Open in New Tab (files), Open as Wiki · Lint Folder (folders), Reveal in File Explorer/Finder · Copy Path · Copy Relative Path (later: New File, Rename, Delete)
+- ✅ Find in folder (Ctrl/Cmd+Shift+F, also Ctrl/Cmd+P outside a wiki): the filter box also searches the text of every file from 3 characters, with the wiki search's rules and snippets; a result opens with the match highlighted
 
 **Behaviour**
-- ⬜ Folder watcher (`notify`): new, renamed and deleted files and folders update the tree live; a folder appears when its first Markdown file is created and disappears when its last one is removed
-- ⬜ Session restore reopens the folder with its expanded folders, the panel width and the open tabs
-- ⬜ Security: the tree never follows symlinks/junctions outside the opened folder; files are opened through the same path checks and sanitizer as any other document
+- ✅ The folder is watched recursively: added, renamed and removed Markdown files and folders update the tree (changes in hidden and skipped folders, and to other files, are ignored)
+- ✅ Session restore reopens the folder with its expanded folders (the width is a setting); a folder the app is started with replaces last session's folder
+- ✅ Security: no symlink is followed; files open through the same `open_document` path and sanitizer as any other document
 
-**Settings** (new "Folder" section in the Settings tab)
+**Refactoring of existing code**
+- ✅ Core: new `folder` module (`markdown_files` with the skip rules on the `ignore` crate — ripgrep's walker — `folder_tree`, `search_folder`, natural sort) and `search` module (the wiki search, now shared). The wiki page list and Lint Folder… use the scanner; their own folder walks are removed. Existing wiki snapshot and lint tests pass unchanged. Note: wikis and Lint Folder now also skip `bin`, `obj`, `target` and `.gitignore`d paths
+- ✅ One watcher for files and whole trees: a folder is watched flat, recursively or not at all, depending on what needs it. Wikis are now watched recursively too (pages in subfolders were missed before)
+- ✅ Open Wiki Folder → Open Folder (command `open-folder`, menu, start page); `path_kind` tells wiki folders from other folders. Any folder can still be opened as a wiki
+- ✅ Settings version 2: `wiki.sidebarPosition` / `sidebarWidth` → `layout.sidePanelPosition` / `sidePanelWidth`, migrated when an older `settings.json` is loaded
+- ✅ Frontend: one side-panel host (`#side-panel`, splitter, width, Ctrl/Cmd+B) holding the wiki sidebar or the Explorer; shared context menu for links and the Explorer
+
+**Settings** (new "Folder" section; position in the new "Layout" section)
 
 | Setting | Options (default first) |
 |---|---|
-| Explorer position | **Left** · Right |
-| Explorer shown when a folder opens | On · Off |
-| Preview tabs (single click replaces) | On · Off |
-| Reveal active file in the tree | On · Off |
+| Layout → Side panel position (Explorer and wiki sidebar) | **Left** · Right |
+| Show the Explorer | On · Off |
+| Preview tabs | On · Off |
+| Reveal the active file | On · Off |
 | Compact folders | On · Off |
-| File types shown | `*.md` · `*.md` + `*.markdown` + `*.mdx` |
 | Respect `.gitignore` | On · Off |
-| Extra folders to skip | `node_modules`, `bin`, `obj`, `target` (editable list) |
+| Folders to skip | `node_modules, bin, obj, target` (comma-separated) |
+
+Changing "Respect .gitignore" or "Folders to skip" scans the open folder again at once.
 
 **Tests**
-- ⬜ Core unit tests for the tree builder: folders without Markdown hidden (also deep chains), sort order, compact folders, skipped folders, `.gitignore`, the file limit, symlinks leaving the folder
-- ⬜ Fixture folder `tests/folder/demo` with snapshot of the built tree; watcher test that adds/removes the only `.md` file in a folder
-- ⬜ Vitest for the tree UI: expand/collapse, keyboard navigation, filter, preview tab replaced by the next click
-- ⬜ Manual check against `D:\Code\atc-net` (many repos, ~1,200 `.md` files): time to first paint of the tree and of the full tree
+- ✅ Core unit tests (`folder.rs`): folders without Markdown hidden (also deep chains), natural sort, skipped / hidden / `.gitignore`d folders, file limit, depth limit, symlinks (Unix only), wiki folders marked, folder search
+- ✅ Fixture folder `tests/folder/demo` with a snapshot of the tree (`folder_snapshots.rs`) and a folder search test. The fixture can't hold `node_modules`/`bin`/`obj` folders (the repo's `.gitignore` drops them), so those are tested in temp folders
+- ✅ Settings migration and folder settings (`settings.rs`); watcher filter (which changes count for a tree)
+- ✅ Vitest: tree rows (expand, compact folders, filter, counts), paths, type-to-jump (`folder-tree.test.ts`); preview tabs (`tabs.test.ts`); folder in the session and recent list; Ctrl+Shift+O / Ctrl+Shift+F keys
+- ⬜ Not automated: the Explorer DOM (clicks, keyboard) and real file-watcher events — part of the manual check
+- 🚧 Manual check in the app: done for this repo (see Status). Still to do: keyboard navigation, Ctrl+click / middle-click, Close Folder, preview tabs off, "Open as folder" in a wiki, and a large folder, `D:\Code\atc-net` (many repos, ~1,200 `.md` files): time until the tree shows
 
 **Acceptance criteria**
 - Opening `D:\Code\atc-net\atc-markdown` shows the Explorer at the left with `plans/roadmap.md` and the other Markdown files; `src-tauri/src` (no `.md` files) is not listed.
 - Clicking `roadmap.md` shows it in a preview tab; clicking `README.md` replaces it; double-clicking keeps it open.
-- Setting Explorer position to Right moves the panel to the right side at once.
+- Setting Side panel position to Right moves the Explorer (and the wiki sidebar) to the right side at once, and the outline panel to the left.
+- Opening `D:\Code\atc-net\atc-rest-api-source-generator.wiki` with the same Open Folder command still opens wiki mode exactly as before.
 - Creating `notes/todo.md` in Explorer/Finder makes the `notes` folder appear in the tree within a second.
 
 ### Phase 3 – Later ideas (unprioritized)
