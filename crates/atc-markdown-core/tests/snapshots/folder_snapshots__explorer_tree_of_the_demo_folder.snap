@@ -1,0 +1,17 @@
+---
+source: crates/atc-markdown-core/tests/folder_snapshots.rs
+expression: out
+---
+demo  (7 files, truncated: false)
+▾ docs/  [docs]
+  ▾ guides/  [docs/guides]
+    ▾ api/  [docs/guides/api]
+        overview.md  [docs/guides/api/overview.md]
+    2-setup.md  [docs/2-setup.md]
+    10-deploy.md  [docs/10-deploy.md]
+▾ notes/  [notes]
+    todo.md  [notes/todo.md]
+▾ project.wiki/  (wiki)  [project.wiki]
+    Home.md  [project.wiki/Home.md]
+  CHANGELOG.markdown  [CHANGELOG.markdown]
+  README.md  [README.md]

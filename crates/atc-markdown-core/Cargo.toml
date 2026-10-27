@@ -16,6 +16,7 @@ serde_json.workspace = true
 syntect.workspace = true
 two-face.workspace = true
 thiserror.workspace = true
+ignore.workspace = true
 
 [dev-dependencies]
 insta.workspace = true

@@ -2,27 +2,17 @@
 //! report of the issues per file.
 
 use std::collections::{BTreeMap, HashMap};
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
 use super::{LintConfig, lint};
-use crate::links::is_markdown_file;
+use crate::folder::{ScanOptions, markdown_files};
 use crate::source::read_source;
 use crate::wiki::is_wiki_dir;
 
-/// At most this many files are linted; the report says when there were more.
-pub const MAX_FOLDER_FILES: usize = 5000;
-
 /// A file lists at most this many issues of each rule (the counts include all of them).
 pub const MAX_ISSUES_PER_RULE: usize = 50;
-
-/// Folders that hold installed or generated files, not documentation.
-const SKIPPED_DIRS: &[&str] = &["node_modules"];
-
-/// How deep the folder walk goes.
-const MAX_DEPTH: usize = 16;
 
 /// One issue in a folder report.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -71,7 +61,7 @@ pub struct FolderLint {
     pub scanned: usize,
     /// Files with issues or errors, in path order (clean files are left out).
     pub files: Vec<FileLint>,
-    /// There were more than [`MAX_FOLDER_FILES`] files; the rest were skipped.
+    /// There were more than [`ScanOptions::max_files`] files; the rest were skipped.
     pub truncated: bool,
     /// Problems with configuration files (each reported once).
     pub config_errors: Vec<String>,
@@ -91,20 +81,18 @@ pub struct RuleCount {
     pub files: usize,
 }
 
-/// Lints every Markdown file below `root`. `config_for` gives the configuration
-/// for a file, and an error message if its configuration file is broken.
-/// Hidden folders (`.git`) and `node_modules` are skipped. Files in a wiki
-/// folder are linted as wiki pages (the page name is the title). The files are
-/// read and linted on all CPU cores.
+/// Lints every Markdown file below `root` (found with the shared folder
+/// scanner, so the same files as the Explorer shows). `config_for` gives the
+/// configuration for a file, and an error message if its configuration file is
+/// broken. Files in a wiki folder are linted as wiki pages (the page name is the
+/// title). The files are read and linted on all CPU cores.
 pub fn lint_folder(
     root: &Path,
+    scan: &ScanOptions,
     mut config_for: impl FnMut(&Path) -> (LintConfig, Option<String>),
 ) -> FolderLint {
-    let mut paths = Vec::new();
-    collect(root, 0, &mut paths);
-    paths.sort_by_key(|p| p.to_string_lossy().to_lowercase());
-    let truncated = paths.len() > MAX_FOLDER_FILES;
-    paths.truncate(MAX_FOLDER_FILES);
+    let found = markdown_files(root, scan);
+    let (paths, truncated) = (found.files, found.truncated);
 
     // Configuration and wiki-ness per file, in order (cheap, and `config_for`
     // may cache), then the slow part in parallel.
@@ -254,31 +242,10 @@ fn column(text: &str, offset: usize) -> usize {
     text[start..end].chars().count() + 1
 }
 
-fn collect(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        let Ok(kind) = entry.file_type() else {
-            continue;
-        };
-        let path = entry.path();
-        if kind.is_dir() {
-            let skipped = name.starts_with('.') || SKIPPED_DIRS.contains(&name.as_ref());
-            if !skipped && depth < MAX_DEPTH {
-                collect(&path, depth + 1, out);
-            }
-        } else if kind.is_file() && is_markdown_file(&path) {
-            out.push(path);
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     fn temp_dir(name: &str) -> PathBuf {
         let dir =
@@ -302,7 +269,9 @@ mod tests {
         fs::write(dir.join("node_modules/pkg/README.md"), "x \n").unwrap();
         fs::write(dir.join("latin1.md"), b"# A\n\n\xe6\n").unwrap();
 
-        let report = lint_folder(&dir, |_| (LintConfig::app_defaults(), None));
+        let report = lint_folder(&dir, &ScanOptions::default(), |_| {
+            (LintConfig::app_defaults(), None)
+        });
         assert_eq!(report.scanned, 4);
         assert!(!report.truncated);
         let names: Vec<_> = report.files.iter().map(|f| f.relative.as_str()).collect();
@@ -332,7 +301,7 @@ mod tests {
         fs::write(dir.join("doc.md"), "Text\n").unwrap();
         fs::write(dir.join("other.md"), "Text\n").unwrap();
 
-        let report = lint_folder(&dir, |_| {
+        let report = lint_folder(&dir, &ScanOptions::default(), |_| {
             (LintConfig::app_defaults(), Some("bad config".into()))
         });
         let names: Vec<_> = report.files.iter().map(|f| f.relative.as_str()).collect();
@@ -352,7 +321,9 @@ mod tests {
         .unwrap();
         fs::write(dir.join("one.md"), "# One\n\nx \n\tz\n").unwrap();
 
-        let report = lint_folder(&dir, |_| (LintConfig::app_defaults(), None));
+        let report = lint_folder(&dir, &ScanOptions::default(), |_| {
+            (LintConfig::app_defaults(), None)
+        });
         let many = &report.files[0];
         assert_eq!((many.issues.len(), many.total), (MAX_ISSUES_PER_RULE, 250));
         assert_eq!(report.files[1].total, 2);

@@ -17,10 +17,7 @@ mod suppress;
 use serde::Serialize;
 
 pub use config::{CONFIG_FILE_NAMES, ConfigError, LintConfig, RuleConfig, find_config_file};
-pub use folder::{
-    FileLint, FolderIssue, FolderLint, MAX_FOLDER_FILES, MAX_ISSUES_PER_RULE, RuleCount,
-    lint_folder,
-};
+pub use folder::{FileLint, FolderIssue, FolderLint, MAX_ISSUES_PER_RULE, RuleCount, lint_folder};
 
 /// A markdownlint rule: id, name and what it checks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

@@ -17,11 +17,13 @@ use std::time::UNIX_EPOCH;
 use serde::Serialize;
 
 use crate::document::{DocumentError, read_markdown, strip_verbatim_prefix};
+use crate::folder::{ScanOptions, markdown_files};
 use crate::links::{LinkTarget, is_markdown_file};
 use crate::paths::{has_scheme, percent_decode, percent_encode_component};
 use crate::render::{
     LinkRewrite, LinkRewriter, RenderOptions, Rendered, SanitizedHtml, render_wiki_page,
 };
+use crate::search::{self, Snippet};
 
 const SIDEBAR: &str = "_sidebar";
 const FOOTER: &str = "_footer";
@@ -116,78 +118,6 @@ pub struct SearchHit {
     pub snippet: Option<Snippet>,
 }
 
-/// Text around a match, split so the match can be shown in bold.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct Snippet {
-    /// Text before the match.
-    pub before: String,
-    /// The matched text, as written in the page.
-    pub hit: String,
-    /// Text after the match.
-    pub after: String,
-}
-
-/// Some text either side of a match (more after than before, so the match
-/// stays visible in a two-line preview), on one line, without Markdown noise.
-/// The lowercase terms of a search: words, and `"quoted phrases"` as one term.
-/// One-letter words are dropped (they match nearly every page).
-fn search_terms(query: &str) -> Vec<String> {
-    let mut terms: Vec<String> = Vec::new();
-    for (i, part) in query.split('"').enumerate() {
-        let part = part.trim().to_lowercase();
-        if i % 2 == 1 {
-            terms.push(part); // inside quotes
-        } else {
-            terms.extend(part.split_whitespace().map(str::to_owned));
-        }
-    }
-    terms.retain(|t| t.chars().count() >= 2);
-    terms.sort();
-    terms.dedup();
-    terms
-}
-
-fn snippet(text: &str, lower: &str, at: usize, len: usize) -> Option<Snippet> {
-    // `to_lowercase` can change byte lengths; only use offsets that line up.
-    if lower.len() != text.len() || !text.is_char_boundary(at) || !text.is_char_boundary(at + len) {
-        return None;
-    }
-    let start = text[..at]
-        .char_indices()
-        .rev()
-        .nth(30)
-        .map_or(0, |(i, _)| i);
-    let end = text[at + len..]
-        .char_indices()
-        .nth(80)
-        .map_or(text.len(), |(i, _)| at + len + i);
-    let before = clean_snippet(&text[start..at]);
-    let after = clean_snippet(&text[at + len..end]);
-    Some(Snippet {
-        before: if start > 0 {
-            format!("…{}", before.trim_start())
-        } else {
-            before
-        },
-        hit: text[at..at + len].to_owned(),
-        after: if end < text.len() {
-            format!("{}…", after.trim_end())
-        } else {
-            after
-        },
-    })
-}
-
-/// Text on one line without Markdown markup: heading `#`s, emphasis, code
-/// ticks, table pipes and quote marks. A `#` inside a word (C#, F#) stays.
-fn clean_snippet(text: &str) -> String {
-    text.split_whitespace()
-        .filter(|word| !word.chars().all(|c| c == '#' || c == '>' || c == '|'))
-        .collect::<Vec<_>>()
-        .join(" ")
-        .replace(['*', '`', '|'], "")
-}
-
 /// What a link in a wiki page points to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WikiHref<'a> {
@@ -244,9 +174,11 @@ impl Wiki {
         };
         let root = strip_verbatim_prefix(fs::canonicalize(root).map_err(io_err)?);
 
-        let mut files = Vec::new();
-        collect_markdown(&root, 0, &mut files);
-        files.sort();
+        let scan = ScanOptions {
+            max_depth: MAX_DEPTH,
+            ..ScanOptions::default()
+        };
+        let files = markdown_files(&root, &scan).files;
 
         let mut pages = Vec::new();
         let (mut sidebar, mut footer) = (None, None);
@@ -470,52 +402,13 @@ impl Wiki {
     /// text or the title. Pages whose title has them all come first, then by
     /// number of matches. At most `limit` results.
     pub fn search(&self, query: &str, limit: usize) -> Vec<SearchHit> {
-        let terms = search_terms(query);
-        if terms.is_empty() {
-            return Vec::new();
-        }
-        // The snippet shows the most specific (longest) term found in the text.
-        let mut by_length = terms.clone();
-        by_length.sort_by_key(|t| std::cmp::Reverse(t.chars().count()));
-        let mut hits: Vec<(bool, usize, SearchHit)> = self
-            .pages
-            .iter()
-            .filter_map(|page| {
-                let text = fs::read_to_string(&page.path).ok()?;
-                let lower = text.to_lowercase();
-                let title = page.title.to_lowercase();
-                let mut count = 0;
-                for term in &terms {
-                    let n = lower.matches(term.as_str()).count();
-                    if n == 0 && !title.contains(term.as_str()) {
-                        return None;
-                    }
-                    count += n;
-                }
-                let in_title = terms.iter().all(|t| title.contains(t.as_str()));
-                let snippet = by_length.iter().find_map(|term| {
-                    let at = lower.find(term.as_str())?;
-                    snippet(&text, &lower, at, term.len())
-                });
-                Some((
-                    in_title,
-                    count,
-                    SearchHit {
-                        page: page.clone(),
-                        matches: count,
-                        snippet,
-                    },
-                ))
+        search::search(&self.pages, |p| &p.path, |p| &p.title, query, limit)
+            .into_iter()
+            .map(|(page, found)| SearchHit {
+                page: page.clone(),
+                matches: found.matches,
+                snippet: found.snippet,
             })
-            .collect();
-        hits.sort_by(|a, b| {
-            b.0.cmp(&a.0)
-                .then(b.1.cmp(&a.1))
-                .then(a.2.page.title.cmp(&b.2.page.title))
-        });
-        hits.into_iter()
-            .take(limit)
-            .map(|(_, _, hit)| hit)
             .collect()
     }
 
@@ -564,24 +457,6 @@ fn page_key(name: &str) -> String {
         .find_map(|ext| strip_suffix_ignore_case_opt(&name, &format!(".{ext}")))
         .unwrap_or(&name);
     name.trim().replace(' ', "-").to_lowercase()
-}
-
-fn collect_markdown(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let hidden = entry.file_name().to_string_lossy().starts_with('.');
-        let Ok(kind) = entry.file_type() else {
-            continue;
-        };
-        if kind.is_dir() && !hidden && depth < MAX_DEPTH {
-            collect_markdown(&path, depth + 1, out);
-        } else if kind.is_file() && is_markdown_file(&path) {
-            out.push(path);
-        }
-    }
 }
 
 /// The `origin` URL from the folder's git config, if any. `.git` may be a folder
@@ -902,26 +777,6 @@ mod tests {
             .find(|h| h.page.name == "Working-with-Overlays")
             .unwrap();
         assert_eq!(overlays.snippet.as_ref().unwrap().hit, "Apply");
-    }
-
-    #[test]
-    fn splits_search_terms() {
-        assert_eq!(search_terms("  Foo  bar "), ["bar", "foo"]);
-        assert_eq!(
-            search_terms("a \"Getting Started\" x go"),
-            ["getting started", "go"]
-        );
-        assert_eq!(search_terms("\"unclosed phrase"), ["unclosed phrase"]);
-        assert_eq!(search_terms("a b"), Vec::<String>::new());
-        assert_eq!(search_terms("dup DUP"), ["dup"]);
-    }
-
-    #[test]
-    fn snippets_drop_markup_but_keep_csharp() {
-        assert_eq!(
-            clean_snippet("## Use the C# client\n> **bold** `code` | cell |"),
-            "Use the C# client bold code cell"
-        );
     }
 
     #[test]
