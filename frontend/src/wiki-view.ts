@@ -10,6 +10,8 @@ export interface WikiHeaderActions {
   openUrl(url: string): void;
   /** Opens the page in the editor. */
   edit(): void;
+  /** Opens the wiki folder in the Explorer, with the page as a normal tab. */
+  openAsFolder(): void;
 }
 
 export function renderWikiHeader(header: HTMLElement, view: WikiView, actions: WikiHeaderActions): void {
@@ -45,7 +47,13 @@ export function renderWikiHeader(header: HTMLElement, view: WikiView, actions: W
   editButton.textContent = "✎ Edit";
   editButton.title = "Edit this page (Ctrl+E)";
   editButton.addEventListener("click", actions.edit);
-  nav.append(editButton);
+  const folderButton = document.createElement("button");
+  folderButton.type = "button";
+  folderButton.className = "wiki-edit";
+  folderButton.textContent = "📁 Open as folder";
+  folderButton.title = "Show the wiki's files in the Explorer";
+  folderButton.addEventListener("click", actions.openAsFolder);
+  nav.append(editButton, folderButton);
 
   const url = pageUrl(view.info.url, view.page.name);
   if (url) {
@@ -126,13 +134,15 @@ export function renderSearchResults(
   list: HTMLElement,
   hits: readonly SearchHit[] | undefined,
   open: (hit: SearchHit) => void,
+  noun = "page",
 ): void {
   title.hidden = hits === undefined;
   if (hits === undefined) {
     list.replaceChildren();
     return;
   }
-  title.textContent = hits.length === 0 ? "Not found in any page" : `Found in ${hits.length} page${hits.length === 1 ? "" : "s"}`;
+  title.textContent =
+    hits.length === 0 ? `Not found in any ${noun}` : `Found in ${hits.length} ${noun}${hits.length === 1 ? "" : "s"}`;
   list.replaceChildren(
     ...hits.map((hit) => {
       const item = document.createElement("li");

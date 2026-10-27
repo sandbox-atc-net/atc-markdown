@@ -12,6 +12,7 @@ import { copyText, enhance, enhanceRich } from "./enhance";
 import {
   applied,
   needsRerender,
+  needsRescan,
   stepTextSize,
   type Settings,
   type SettingsChanges,
@@ -24,14 +25,19 @@ import { highlightCurrent, outlineItems, renderOutline } from "./outline";
 import { MAX_CLOSED, MAX_RECENT, parseRecent, remember, type RecentEntry } from "./recent";
 import { currentEntry, navigate, startHistory, step, type History } from "./history";
 import { describeLink, type BubbleContent, type IconName, type LinkPreview, type LinkTarget } from "./links";
-import { parseSession, startupState, toSession, type Session, type SessionTab } from "./session";
+import { parseSession, startupState, toSession, type Session, type SessionFolder, type SessionTab } from "./session";
+import { Explorer, type MenuItem, type OpenHow } from "./explorer-view";
+import { relativeTo, type FolderTree } from "./folder-tree";
 import {
   activateTab,
   activeTab,
   closeTab,
   emptyTabs,
   isAppView,
+  keepTab,
+  openPreviewTab,
   openTab,
+  previewTab,
   replaceTab,
   SETTINGS_TAB_PATH,
   uniqueTabPath,
@@ -62,7 +68,10 @@ const MARKDOWN_PATTERN = new RegExp(`\\.(${MARKDOWN_EXTENSIONS.join("|")})$`, "i
 
 
 /** Mirrors `PathKind` in `src-tauri/src/commands.rs`. */
-type PathKind = { kind: "wiki"; root: string } | { kind: "document"; wikiRoot: string | null };
+type PathKind =
+  | { kind: "wiki"; root: string }
+  | { kind: "folder"; root: string }
+  | { kind: "document"; wikiRoot: string | null };
 
 const element = <T extends HTMLElement>(selector: string): T => document.querySelector<T>(selector)!;
 
@@ -76,6 +85,8 @@ const findInput = element<HTMLInputElement>("#find-input");
 const findCount = element<HTMLElement>("#find-count");
 const linkStatus = element<HTMLElement>("#link-status");
 const linkMenu = element<HTMLElement>("#link-menu");
+const sidePanel = element<HTMLElement>("#side-panel");
+const sideSplitter = element<HTMLElement>("#side-splitter");
 const wikiSidebar = element<HTMLElement>("#wiki-sidebar");
 const wikiSidebarBody = element<HTMLElement>("#wiki-sidebar-body");
 const wikiPages = element<HTMLDetailsElement>("#wiki-pages");
@@ -84,7 +95,6 @@ const wikiPagesFilter = element<HTMLInputElement>("#wiki-pages-filter");
 const wikiPagesList = element<HTMLElement>("#wiki-pages-list");
 const wikiSearchTitle = element<HTMLElement>("#wiki-search-title");
 const wikiSearchResults = element<HTMLElement>("#wiki-search-results");
-const wikiSplitter = element<HTMLElement>("#wiki-splitter");
 const wikiHeader = element<HTMLElement>("#wiki-header");
 const wikiFooter = element<HTMLElement>("#wiki-footer");
 const wikiBanner = element<HTMLElement>("#wiki-banner");
@@ -100,6 +110,9 @@ const recentSection = element<HTMLElement>("#recent");
 const recentList = element<HTMLElement>("#recent-list");
 
 let state: TabState = emptyTabs;
+/** The folder open in the Explorer (one per window). */
+let folder: FolderTree | undefined;
+let explorer: Explorer;
 /** The user's settings; replaced on every `settings-changed` event. */
 let settings: Settings;
 let codeThemes: CodeThemeChoice[] = [];
@@ -159,6 +172,7 @@ function render(): void {
     if (doc?.lintReport) renderReport(doc.lintReport);
     renderWiki(doc);
     renderBanner(doc);
+    renderSidePanel(doc);
 
     const scroll = pendingScroll?.tab === doc?.path ? pendingScroll : undefined;
     pendingScroll = undefined;
@@ -185,7 +199,7 @@ function updateOutline(): void {
   const doc = activeTab(state);
   const items = doc && !isAppView(doc) && settings.appearance.showOutline ? outlineItems(preview) : [];
   outline.hidden = items.length === 0;
-  const onRight = settings.wiki.sidebarPosition !== "right";
+  const onRight = settings.layout.sidePanelPosition !== "right";
   viewport.classList.toggle("outline-right", !outline.hidden && onRight);
   viewport.classList.toggle("outline-left", !outline.hidden && !onRight);
   renderOutline(outlineList, items, (id) => scrollToId(id));
@@ -241,6 +255,7 @@ function windowTitle(doc: OpenDocument | undefined): string {
 function renderTab(doc: OpenDocument, index: number): HTMLElement {
   const tab = document.createElement("div");
   tab.className = doc.wiki ? "tab wiki" : doc.edit?.dirty ? "tab dirty" : "tab";
+  if (doc.preview) tab.classList.add("preview");
   tab.setAttribute("role", "tab");
   tab.setAttribute("aria-selected", String(index === state.activeIndex));
   tab.title = doc.wiki
@@ -249,6 +264,10 @@ function renderTab(doc: OpenDocument, index: number): HTMLElement {
       ? `Lint report – ${doc.lintReport.root}`
       : doc.path;
   tab.addEventListener("click", () => setState(activateTab(state, index)));
+  // Double-click keeps a preview tab open, like VS Code.
+  tab.addEventListener("dblclick", () => {
+    if (doc.preview) setState(keepTab(state, doc.path));
+  });
   tab.addEventListener("auxclick", (e) => {
     if (e.button === 1) void closeDocument(index);
   });
@@ -281,13 +300,35 @@ function renderNewTabButton(): HTMLElement {
   return button;
 }
 
-/** Shows or hides the wiki sidebar, header and footer for the active tab. */
+/** Scroll position of the side panel per content, kept while the other one is shown. */
+const sidePanelScroll = { wiki: 0, explorer: 0 };
+let sidePanelShows: "wiki" | "explorer" | undefined;
+
+/**
+ * The side panel shows the wiki sidebar in a wiki tab and the Explorer of the
+ * open folder in every other tab. Ctrl+B hides whichever is shown.
+ */
+function renderSidePanel(doc: OpenDocument | undefined): void {
+  const shows = doc?.wiki ? "wiki" : folder ? "explorer" : undefined;
+  if (shows !== sidePanelShows) {
+    if (sidePanelShows) sidePanelScroll[sidePanelShows] = sidePanel.scrollTop;
+    wikiSidebar.hidden = shows !== "wiki";
+    explorer.element.hidden = shows !== "explorer";
+    sidePanel.hidden = shows === undefined;
+    sideSplitter.hidden = shows === undefined;
+    viewport.classList.toggle("has-sidebar", shows !== undefined);
+    if (shows) sidePanel.scrollTop = sidePanelScroll[shows];
+    sidePanelShows = shows;
+  }
+  const visible = shows === "wiki" ? settings.wiki.sidebarVisible : settings.folder.explorerVisible;
+  document.body.classList.toggle("sidebar-hidden", shows !== undefined && !visible);
+  explorer.setActiveFile(doc && !isAppView(doc) && !doc.wiki ? doc.path : undefined, settings.folder.revealActiveFile);
+}
+
+/** Shows or hides the wiki header and footer, and fills the sidebar, for the active tab. */
 function renderWiki(doc: OpenDocument | undefined): void {
   const view = doc?.wiki;
-  wikiSidebar.hidden = !view;
-  wikiSplitter.hidden = !view;
   wikiHeader.hidden = !view;
-  viewport.classList.toggle("has-sidebar", Boolean(view));
   if (!view) {
     wikiFooter.hidden = true;
     shownSidebar = undefined;
@@ -298,6 +339,7 @@ function renderWiki(doc: OpenDocument | undefined): void {
     back: () => runCommand("go-back"),
     forward: () => runCommand("go-forward"),
     edit: () => void editWikiPage().catch(reportError),
+    openAsFolder: () => void openWikiAsFolder(view).catch(reportError),
     // Straight to the browser: wiki link resolution would map this URL back to the local page.
     openUrl: (url) => void invoke("follow_link", { documentPath: view.page.path, href: url }).catch(reportError),
   });
@@ -374,9 +416,10 @@ async function loadDocument(path: string, wikiRoot?: string): Promise<OpenDocume
   }
 }
 
-/** Loads whatever a path is: a wiki folder or a Markdown file. Other files are skipped. */
+/** Loads a wiki folder or a Markdown file into a tab. Other files (and plain folders) are skipped. */
 async function loadPath(path: string): Promise<OpenDocument | undefined> {
   const kind = await invoke<PathKind>("path_kind", { path });
+  if (kind.kind === "folder") return undefined;
   if (kind.kind === "wiki") {
     try {
       return await loadWikiTab(kind.root);
@@ -398,6 +441,10 @@ async function openPaths(paths: string[], fromOs = false): Promise<void> {
     if (kind.kind === "wiki") {
       // An open wiki is switched to, not reloaded at Home.
       await openWiki(kind.root);
+      continue;
+    }
+    if (kind.kind === "folder") {
+      await openFolder(kind.root);
       continue;
     }
     // A tab being edited is only switched to: loading it again would drop its edit state.
@@ -509,9 +556,148 @@ async function showOpenDialog(): Promise<void> {
   if (selected) await openPaths(Array.isArray(selected) ? selected : [selected]);
 }
 
-async function showOpenWikiDialog(): Promise<void> {
-  const selected = await openDialog({ directory: true, multiple: false, title: "Open wiki folder" });
-  if (typeof selected === "string") await openWiki(selected);
+/** File → Open Folder…: a GitHub wiki opens in wiki mode, any other folder in the Explorer. */
+async function showOpenFolderDialog(): Promise<void> {
+  const selected = await openDialog({ directory: true, multiple: false, title: "Open folder", defaultPath: folder?.root });
+  if (typeof selected === "string") await openPaths([selected]);
+}
+
+// ---------------------------------------------------------------- folder (Explorer)
+
+/** Opens a folder in the Explorer, in place of the one open before. */
+async function openFolder(root: string, expanded?: string[]): Promise<void> {
+  let tree: FolderTree;
+  try {
+    tree = await invoke<FolderTree>("open_folder", { root });
+  } catch (error) {
+    await message(String(error), { title: "Open folder", kind: "error" });
+    return;
+  }
+  if (folder && folder.root.toLowerCase() !== tree.root.toLowerCase()) {
+    void invoke("close_folder", { root: folder.root });
+  }
+  folder = tree;
+  explorer.setCompact(settings.folder.compactFolders);
+  explorer.setTree(tree, expanded);
+  saveRecent(remember(loadRecent(), { kind: "folder", path: tree.root, title: tree.name }, MAX_RECENT));
+  if (!settings.folder.explorerVisible) updateSettings({ folder: { explorerVisible: true } });
+  saveSession();
+  renderSidePanel(activeTab(state));
+  if (!activeTab(state)) renderRecent();
+}
+
+/** File → Close Folder. The open tabs stay. */
+function closeFolder(): void {
+  if (!folder) return;
+  void invoke("close_folder", { root: folder.root });
+  folder = undefined;
+  explorer.setTree(undefined);
+  saveSession();
+  renderSidePanel(activeTab(state));
+}
+
+/** The folder changed on disk (or a setting changed what it shows): scan it again. */
+async function refreshFolder(root?: string, rewatch = false): Promise<void> {
+  const open = folder;
+  if (!open || (root !== undefined && root.toLowerCase() !== open.root.toLowerCase())) return;
+  // `open_folder` also gives the watcher the new folders to skip.
+  const tree = await invoke<FolderTree>(rewatch ? "open_folder" : "folder_tree", { root: open.root });
+  if (folder !== open) return; // closed or replaced meanwhile
+  if (JSON.stringify(tree) === JSON.stringify(open)) return;
+  folder = tree;
+  explorer.setTree(tree);
+}
+
+/**
+ * Opens a file from the Explorer (or a link inside the open folder):
+ * `preview` replaces the preview tab, `keep` opens a normal tab, `background`
+ * opens a normal tab without switching to it.
+ */
+async function openFromExplorer(path: string, how: OpenHow): Promise<void> {
+  const open = state.tabs.findIndex((t) => !isAppView(t) && !t.wiki && t.path.toLowerCase() === path.toLowerCase());
+  if (how === "background") {
+    const active = activeTab(state)?.path;
+    if (open < 0) await openPaths([path]);
+    else setState(keepTab(state, path));
+    const back = state.tabs.findIndex((t) => t.path === active);
+    if (back >= 0) setState(activateTab(state, back));
+    return;
+  }
+  if (how === "keep" || !settings.folder.previewTabs) {
+    if (open >= 0) setState(activateTab(state, open));
+    else await openPaths([path]);
+    setState(keepTab(state, path));
+    return;
+  }
+  if (open >= 0) {
+    setState(activateTab(state, open));
+    return;
+  }
+  const doc = await loadPath(path);
+  if (!doc) return;
+  const replaced = previewTab(state);
+  setState(openPreviewTab(state, doc));
+  if (replaced && replaced.path.toLowerCase() !== doc.path.toLowerCase()) {
+    void invoke("close_document", { path: replaced.path });
+    scrollPositions.delete(replaced.path);
+    forgetEditor(replaced.path);
+  }
+  if (settings.editor.defaultMode !== "preview") await setMode(settings.editor.defaultMode);
+}
+
+/** "Open as folder" in a wiki tab: the wiki folder in the Explorer, the page as a normal tab beside it. */
+async function openWikiAsFolder(view: WikiView): Promise<void> {
+  await openFolder(view.info.root);
+  await openFromExplorer(view.page.path, "keep");
+}
+
+let folderSearchRun = 0;
+
+/** Full-text search across the open folder (from the Explorer's filter box). */
+function searchFolder(query: string): void {
+  const root = folder?.root;
+  if (!root) return;
+  const run = ++folderSearchRun;
+  void invoke<SearchHit[]>("search_folder", { root, query })
+    .then((hits) => {
+      if (run === folderSearchRun && folder?.root === root) explorer.showSearchResults(hits, query);
+    })
+    .catch(reportError);
+}
+
+/** Ctrl+Shift+F (and Ctrl+P outside a wiki): the Explorer's filter box. */
+function focusExplorerFilter(): void {
+  if (shown?.wiki) {
+    focusPageFilter();
+    return;
+  }
+  if (!folder) {
+    showToast("Open a folder first (Ctrl+Shift+O)");
+    return;
+  }
+  if (!settings.folder.explorerVisible) updateSettings({ folder: { explorerVisible: true } });
+  document.body.classList.remove("sidebar-hidden");
+  explorer.focusFilter();
+}
+
+function wireExplorer(): void {
+  explorer = new Explorer(element<HTMLElement>("#explorer"), {
+    open: (path, how) => void openFromExplorer(path, how).catch(reportError),
+    openWiki: (root) => void openWiki(root).catch(reportError),
+    search: searchFolder,
+    openSearchHit: (hit, query) =>
+      void openSearchHit(hit, query, (path) => openFromExplorer(path, "preview")).catch(reportError),
+    refresh: () => void refreshFolder().catch(reportError),
+    close: closeFolder,
+    showMenu: showContextMenu,
+    expandedChanged: saveSession,
+    reveal: (path) => void invoke("reveal_path", { path }).catch(reportError),
+    copy: (text) =>
+      void copyText(text)
+        .then(() => showToast("Copied"))
+        .catch(reportError),
+    lintFolder: (root) => void lintFolder(root).catch(reportError),
+  });
 }
 
 // ---------------------------------------------------------------- wiki
@@ -733,7 +919,9 @@ function forgetEditor(path: string): void {
 function updateEdit(path: string, patch: Partial<EditInfo>): void {
   const doc = state.tabs.find((t) => t.path === path);
   if (!doc?.edit) return;
-  setState(updateTab(state, { ...doc, edit: { ...doc.edit, ...patch } }));
+  const next = updateTab(state, { ...doc, edit: { ...doc.edit, ...patch } });
+  // An edited preview tab is kept: the next Explorer click must not replace it.
+  setState(patch.dirty ? keepTab(next, path) : next);
 }
 
 /** Shows or hides the editor pane and toolbar for the active tab's mode. */
@@ -1285,10 +1473,10 @@ async function showProblems(): Promise<void> {
 /** Asks for a folder (the open wiki or the document's folder first) and lints it. */
 async function chooseFolderToLint(): Promise<void> {
   const doc = activeTab(state);
-  const lastFolder = doc?.lintReport?.root ?? doc?.wiki?.info.root ?? doc?.wikiRoot;
+  const lastFolder = doc?.lintReport?.root ?? doc?.wiki?.info.root ?? doc?.wikiRoot ?? folder?.root;
   const docFolder = doc && !isAppView(doc) && !doc.edit?.untitled ? doc.path.replace(/[\\/][^\\/]*$/, "") : undefined;
-  const folder = await openDialog({ directory: true, title: "Lint folder", defaultPath: lastFolder ?? docFolder });
-  if (typeof folder === "string") await lintFolder(folder);
+  const chosen = await openDialog({ directory: true, title: "Lint folder", defaultPath: lastFolder ?? docFolder });
+  if (typeof chosen === "string") await lintFolder(chosen);
 }
 
 /** Lints every Markdown file in a folder and shows the report in its tab. */
@@ -1406,6 +1594,9 @@ function onSettingsChanged(next: Settings): void {
   updateOutline();
   // Wiki chrome (page list, banner) reads settings while rendering.
   if (before.wiki.offerOpenAsWiki !== next.wiki.offerOpenAsWiki) renderBanner(shown);
+  explorer.setCompact(next.folder.compactFolders);
+  renderSidePanel(activeTab(state));
+  if (needsRescan(before, next)) void refreshFolder(undefined, true).catch(reportError);
 }
 
 function renderSettings(): void {
@@ -1450,11 +1641,8 @@ function migrateOldSettings(): void {
     const [zoom, width, hidden] = keys.map((key) => localStorage.getItem(key));
     const changes: SettingsChanges = {};
     if (zoom && Number(zoom) > 0) changes.appearance = { textSize: Math.round(Number(zoom) * 100) };
-    if (width || hidden) {
-      changes.wiki = {};
-      if (width && Number(width) > 0) changes.wiki.sidebarWidth = Math.round(Number(width));
-      if (hidden) changes.wiki.sidebarVisible = hidden !== "true";
-    }
+    if (width && Number(width) > 0) changes.layout = { sidePanelWidth: Math.round(Number(width)) };
+    if (hidden) changes.wiki = { sidebarVisible: hidden !== "true" };
     if (Object.keys(changes).length > 0) updateSettings(changes);
     for (const key of keys) localStorage.removeItem(key);
   } catch {
@@ -1464,8 +1652,11 @@ function migrateOldSettings(): void {
 
 // ---------------------------------------------------------------- sidebar
 
+/** Ctrl+B: hides or shows what the side panel holds now (wiki sidebar or Explorer). */
 function toggleSidebar(): void {
-  updateSettings({ wiki: { sidebarVisible: !settings.wiki.sidebarVisible } });
+  if (shown?.wiki) updateSettings({ wiki: { sidebarVisible: !settings.wiki.sidebarVisible } });
+  else if (folder) updateSettings({ folder: { explorerVisible: !settings.folder.explorerVisible } });
+  else showToast("Open a folder to see its files (Ctrl+Shift+O)");
 }
 
 let searchTimer: number | undefined;
@@ -1485,15 +1676,15 @@ function scheduleWikiSearch(): void {
     void invoke<SearchHit[]>("search_wiki", { root, query })
       .then((hits) => {
         if (run !== searchRun) return;
-        renderSearchResults(wikiSearchTitle, wikiSearchResults, hits, (hit) => void openSearchHit(hit, query));
+        renderSearchResults(wikiSearchTitle, wikiSearchResults, hits, (hit) => void openSearchHit(hit, query, goToWikiPage));
       })
       .catch(reportError);
   }, 250);
 }
 
-/** Opens a search result and highlights the text with Find. */
-async function openSearchHit(hit: SearchHit, query: string): Promise<void> {
-  await goToWikiPage(hit.page.path);
+/** Opens a search result (wiki page or folder file) and highlights the text with Find. */
+async function openSearchHit(hit: SearchHit, query: string, open: (path: string) => Promise<void>): Promise<void> {
+  await open(hit.page.path);
   // The words can be apart on the page: highlight the one the snippet shows.
   const text = hit.snippet?.hit ?? (/[\s"]/.test(query.trim()) ? undefined : query);
   if (!text) return;
@@ -1514,25 +1705,25 @@ function focusPageFilter(): void {
 }
 
 function wireSidebar(): void {
-  wikiSplitter.addEventListener("pointerdown", (e) => {
+  sideSplitter.addEventListener("pointerdown", (e) => {
     e.preventDefault();
-    wikiSplitter.setPointerCapture(e.pointerId);
-    wikiSplitter.classList.add("dragging");
+    sideSplitter.setPointerCapture(e.pointerId);
+    sideSplitter.classList.add("dragging");
     const box = viewport.getBoundingClientRect();
-    const onRight = settings.wiki.sidebarPosition === "right";
-    let width = settings.wiki.sidebarWidth;
+    const onRight = settings.layout.sidePanelPosition === "right";
+    let width = settings.layout.sidePanelWidth;
     const move = (m: PointerEvent) => {
       const raw = onRight ? box.right - m.clientX : m.clientX - box.left;
       width = Math.round(Math.min(Math.max(raw, 160), box.width * 0.5));
       document.documentElement.style.setProperty("--sidebar-width", `${width}px`);
     };
     const up = () => {
-      wikiSplitter.classList.remove("dragging");
-      wikiSplitter.removeEventListener("pointermove", move);
-      updateSettings({ wiki: { sidebarWidth: width } });
+      sideSplitter.classList.remove("dragging");
+      sideSplitter.removeEventListener("pointermove", move);
+      updateSettings({ layout: { sidePanelWidth: width } });
     };
-    wikiSplitter.addEventListener("pointermove", move);
-    wikiSplitter.addEventListener("pointerup", up, { once: true });
+    sideSplitter.addEventListener("pointermove", move);
+    sideSplitter.addEventListener("pointerup", up, { once: true });
   });
 
   wikiPagesFilter.addEventListener("input", () => {
@@ -1593,7 +1784,7 @@ function renderRecent(): void {
       button.title = entry.path;
       const name = document.createElement("span");
       name.className = "recent-name";
-      name.textContent = `${entry.kind === "wiki" ? "📚" : "📄"} ${entry.title}`;
+      name.textContent = `${entry.kind === "wiki" ? "📚" : entry.kind === "folder" ? "📁" : "📄"} ${entry.title}`;
       const where = document.createElement("span");
       where.className = "recent-path";
       where.textContent = entry.path;
@@ -1629,9 +1820,13 @@ async function reopenClosedTab(): Promise<void> {
 
 const SESSION_KEY = "atc-markdown.session";
 
+function sessionFolder(): SessionFolder | undefined {
+  return folder ? { root: folder.root, expanded: explorer.expandedFolders() } : undefined;
+}
+
 function saveSession(): void {
   try {
-    localStorage.setItem(SESSION_KEY, JSON.stringify(toSession(state)));
+    localStorage.setItem(SESSION_KEY, JSON.stringify(toSession(state, sessionFolder())));
   } catch {
     // Storage can be unavailable; tabs then just aren't reopened.
   }
@@ -1666,9 +1861,15 @@ async function restoreTab(tab: SessionTab): Promise<OpenDocument | undefined> {
 async function startup(): Promise<void> {
   const session = settings.files.restoreSession ? loadSession() : undefined;
   const pending = await invoke<string[]>("take_pending_paths");
+  // A folder the app was started with replaces last session's folder.
+  const kinds = await Promise.all(
+    pending.map((path) => invoke<PathKind>("path_kind", { path }).catch(() => undefined)),
+  );
+  const startFolder = pending.filter((_, i) => kinds[i]?.kind === "folder").pop();
+  const files = pending.filter((_, i) => kinds[i]?.kind !== "folder");
   const [restored, opened] = await Promise.all([
     Promise.all((session?.tabs ?? []).map(restoreTab)),
-    Promise.all(pending.map((path) => loadPath(path).catch(() => undefined))),
+    Promise.all(files.map((path) => loadPath(path).catch(() => undefined))),
   ]);
   const openedDocs = opened.filter((doc): doc is OpenDocument => doc !== undefined);
   const ids: string[] = [];
@@ -1678,6 +1879,8 @@ async function startup(): Promise<void> {
     ids.push(id);
     restored[i] = { ...doc, path: id };
   }
+  if (startFolder) await openFolder(startFolder);
+  else if (session?.folder) await openFolder(session.folder.root, session.folder.expanded);
   setState(startupState(restored, session?.active ?? null, openedDocs));
 }
 
@@ -1720,6 +1923,10 @@ async function followHref(href: string, newTab = false): Promise<void> {
       if (wikiRoot && isInside(wikiRoot, target.path)) {
         if (newTab) await openWikiPageInNewTab(target.path, target.fragment);
         else await goToWikiPage(target.path, target.fragment);
+      } else if (folder && relativeTo(folder.root, target.path) !== undefined) {
+        // Like a click in the Explorer: a preview tab (Ctrl+click: a new tab behind).
+        await openFromExplorer(target.path, newTab ? "background" : "preview");
+        if (target.fragment && !newTab) scrollToId(target.fragment);
       } else {
         await openPaths([target.path]);
         if (target.fragment) scrollToId(target.fragment);
@@ -1900,6 +2107,22 @@ async function openLinkMenu(link: HTMLAnchorElement, x: number, y: number): Prom
   }
 
   hideLinkStatus();
+  placeMenu(items, x, y);
+}
+
+/** Shows a context menu (the Explorer's) at a point. */
+function showContextMenu(items: MenuItem[], x: number, y: number): void {
+  const buttons = items.map((item) =>
+    menuItem(item.label, () => {
+      // Closing the menu returns focus to the tree, so the keyboard keeps working there.
+      explorer.element.querySelector<HTMLElement>(".explorer-tree")?.focus();
+      return item.run();
+    }),
+  );
+  placeMenu(buttons, x, y);
+}
+
+function placeMenu(items: HTMLButtonElement[], x: number, y: number): void {
   linkMenu.replaceChildren(...items);
   linkMenu.hidden = false;
   // Keep the menu inside the window.
@@ -1970,7 +2193,7 @@ function wireLinks(): void {
     },
     { passive: true },
   );
-  for (const scroller of [content, wikiSidebar]) {
+  for (const scroller of [content, sidePanel]) {
     scroller.addEventListener(
       "scroll",
       () => {
@@ -2162,8 +2385,14 @@ function runCommand(command: Command): void {
     case "open":
       run(showOpenDialog());
       break;
-    case "open-wiki":
-      run(showOpenWikiDialog());
+    case "open-folder":
+      run(showOpenFolderDialog());
+      break;
+    case "close-folder":
+      closeFolder();
+      break;
+    case "find-in-folder":
+      focusExplorerFilter();
       break;
     case "close-tab":
       if (state.activeIndex >= 0) run(closeDocument(state.activeIndex));
@@ -2178,7 +2407,9 @@ function runCommand(command: Command): void {
       toggleSidebar();
       break;
     case "find-page":
-      focusPageFilter();
+      // Ctrl+P: a wiki page, or a file of the open folder.
+      if (shown?.wiki) focusPageFilter();
+      else focusExplorerFilter();
       break;
     case "settings":
       openSettings();
@@ -2268,6 +2499,8 @@ function wireFindBar(): void {
 }
 
 async function main(): Promise<void> {
+  // First: settings changes and rendering use it.
+  wireExplorer();
   applyCachedTheme();
   settings = await invoke<Settings>("get_settings");
   applySettings();
@@ -2298,7 +2531,7 @@ async function main(): Promise<void> {
   wireSidebar();
   wireFindBar();
   element("#open-button").addEventListener("click", () => runCommand("open"));
-  element("#open-wiki-button").addEventListener("click", () => runCommand("open-wiki"));
+  element("#open-folder-button").addEventListener("click", () => runCommand("open-folder"));
   element("#recent-clear").addEventListener("click", () => {
     saveRecent([]);
     renderRecent();
@@ -2315,13 +2548,14 @@ async function main(): Promise<void> {
     const { payload } = event;
     document.body.classList.toggle("dragging", payload.type === "enter" || payload.type === "over");
     if (payload.type === "drop") {
-      // Folders open as wikis; Markdown files as documents; anything else is ignored.
+      // Wiki folders open as wikis, other folders in the Explorer, Markdown files as documents; the rest is ignored.
       void openPaths(payload.paths).catch(reportError);
     }
   });
 
   await listen<string>("document-changed", (event) => onDocumentChanged(event.payload));
   await listen<string>("wiki-changed", (event) => void refreshWikiPages(event.payload).catch(reportError));
+  await listen<string>("folder-changed", (event) => void refreshFolder(event.payload).catch(reportError));
   await listen<string>("menu-command", (event) => {
     if (isCommand(event.payload) && !dialogOpen()) runCommand(event.payload);
   });

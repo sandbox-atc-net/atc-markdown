@@ -18,6 +18,10 @@ describe("commandForKey", () => {
     expect(commandForKey(ctrl("n"))).toBe("new-file");
     expect(commandForKey(ctrl("N", true))).toBe("editor-line-numbers");
     expect(commandForKey(ctrl("e"))).toBe("toggle-edit");
+    expect(commandForKey(ctrl("O", true))).toBe("open-folder");
+    expect(commandForKey(ctrl("f"))).toBe("find");
+    expect(commandForKey(ctrl("F", true))).toBe("find-in-folder");
+    expect(commandForKey(ctrl("F", true), true)).toBe("find-in-folder");
     expect(commandForKey(press("F5"))).toBe("reload");
     expect(commandForKey(press("ArrowLeft", { altKey: true }))).toBe("go-back");
     expect(commandForKey(press("s"))).toBeUndefined();

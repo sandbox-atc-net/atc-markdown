@@ -1,5 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { activateTab, activeTab, closeTab, emptyTabs, openTab, replaceTab, uniqueTabPath, updateTab, type OpenDocument } from "./tabs";
+import {
+  activateTab,
+  activeTab,
+  closeTab,
+  emptyTabs,
+  keepTab,
+  openPreviewTab,
+  openTab,
+  previewTab,
+  replaceTab,
+  uniqueTabPath,
+  updateTab,
+  type OpenDocument,
+} from "./tabs";
 
 const doc = (path: string): OpenDocument => ({ path, title: path, html: `<p>${path}</p>` });
 
@@ -79,5 +92,45 @@ describe("uniqueTabPath", () => {
     expect(uniqueTabPath([], "C:/w")).toBe("C:/w");
     expect(uniqueTabPath(["c:/W"], "C:/w")).toBe("C:/w::2");
     expect(uniqueTabPath(["C:/w", "C:/w::2"], "C:/w")).toBe("C:/w::3");
+  });
+});
+
+describe("preview tabs", () => {
+  it("replaces the preview tab with the next file opened as a preview", () => {
+    let state = openTab(emptyTabs, doc("kept.md"));
+    state = openPreviewTab(state, doc("a.md"));
+    expect(state.tabs.map((t) => [t.path, t.preview])).toEqual([
+      ["kept.md", undefined],
+      ["a.md", true],
+    ]);
+    state = openPreviewTab(activateTab(state, 0), doc("b.md"));
+    expect(state.tabs.map((t) => t.path)).toEqual(["kept.md", "b.md"]);
+    expect(activeTab(state)?.path).toBe("b.md");
+  });
+
+  it("opens a new preview tab once the old one is kept", () => {
+    let state = openPreviewTab(emptyTabs, doc("a.md"));
+    state = keepTab(state, "A.MD");
+    expect(previewTab(state)).toBeUndefined();
+    state = openPreviewTab(state, doc("b.md"));
+    expect(state.tabs.map((t) => [t.path, t.preview])).toEqual([
+      ["a.md", undefined],
+      ["b.md", true],
+    ]);
+  });
+
+  it("only activates a file that is already open, kept or not", () => {
+    let state = openTab(openTab(emptyTabs, doc("a.md")), doc("b.md"));
+    state = openPreviewTab(state, doc("a.md"));
+    expect(state.activeIndex).toBe(0);
+    expect(state.tabs[0]?.preview).toBeUndefined();
+  });
+
+  it("stays a preview tab when its content is refreshed", () => {
+    let state = openPreviewTab(emptyTabs, doc("a.md"));
+    state = updateTab(state, { ...doc("a.md"), html: "<p>new</p>" });
+    expect(state.tabs[0]?.preview).toBe(true);
+    state = openTab(state, doc("a.md"));
+    expect(state.tabs[0]?.preview).toBe(true);
   });
 });

@@ -21,14 +21,24 @@ export interface Settings {
     codeFont: string;
     showOutline: boolean;
   };
+  /** The side panel: the wiki sidebar in a wiki tab, the Explorer otherwise. */
+  layout: { sidePanelPosition: Side; sidePanelWidth: number };
   wiki: {
-    sidebarPosition: Side;
     sidebarVisible: boolean;
-    sidebarWidth: number;
     pageList: PageList;
     pageHeader: boolean;
     showFooter: boolean;
     offerOpenAsWiki: boolean;
+  };
+  folder: {
+    explorerVisible: boolean;
+    /** One click opens a preview tab that the next click replaces. */
+    previewTabs: boolean;
+    revealActiveFile: boolean;
+    compactFolders: boolean;
+    respectGitignore: boolean;
+    /** Folder names left out of the tree, folder search and Lint Folder. */
+    skipFolders: string[];
   };
   files: { restoreSession: boolean; openFromOs: OpenIn; autoReload: boolean };
   links: { statusBubble: boolean; confirmExternal: boolean; externalMarker: boolean };
@@ -82,21 +92,20 @@ const WIDTHS: Record<ReadingWidth, string> = {
 
 /** What the page should look like for these settings. */
 export function applied(settings: Settings, systemDark: boolean): Applied {
-  const { appearance, wiki, links, code } = settings;
+  const { appearance, layout, wiki, links, code } = settings;
   const theme = appearance.theme === "system" ? (systemDark ? "dark" : "light") : appearance.theme;
   const vars: Record<string, string> = {
     "--zoom": String(appearance.textSize / 100),
     "--reading-width": WIDTHS[appearance.readingWidth],
-    "--sidebar-width": `${wiki.sidebarWidth}px`,
+    "--sidebar-width": `${layout.sidePanelWidth}px`,
   };
   if (appearance.readingFont) vars["--font-sans"] = `${appearance.readingFont}, var(--font-sans-default)`;
   if (appearance.codeFont) vars["--font-mono"] = `${appearance.codeFont}, var(--font-mono-default)`;
   return {
     theme,
     classes: {
-      "sidebar-right": wiki.sidebarPosition === "right",
+      "sidebar-right": layout.sidePanelPosition === "right",
       "outline-on": appearance.showOutline,
-      "sidebar-hidden": !wiki.sidebarVisible,
       "page-list-hidden": wiki.pageList === "hidden",
       "no-wiki-header": !wiki.pageHeader,
       "no-wiki-footer": !wiki.showFooter,
@@ -117,6 +126,13 @@ export const TEXT_SIZES = [60, 70, 80, 90, 100, 110, 125, 150, 175, 200, 250];
 export function stepTextSize(current: number, direction: 1 | -1): number {
   if (direction > 0) return TEXT_SIZES.find((size) => size > current) ?? TEXT_SIZES[TEXT_SIZES.length - 1]!;
   return [...TEXT_SIZES].reverse().find((size) => size < current) ?? TEXT_SIZES[0]!;
+}
+
+/** True if a change needs the open folder to be scanned again. */
+export function needsRescan(before: Settings, after: Settings): boolean {
+  const a = before.folder;
+  const b = after.folder;
+  return a.respectGitignore !== b.respectGitignore || a.skipFolders.join("/") !== b.skipFolders.join("/");
 }
 
 /** True if a change needs open documents to be rendered again (by Rust). */

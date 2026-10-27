@@ -36,6 +36,11 @@ export interface OpenDocument {
   lintReport?: FolderLint;
   /** Set once a document tab has been opened in the editor. */
   edit?: EditInfo;
+  /**
+   * A preview tab (opened with one click in the Explorer, title in italics):
+   * the next file opened that way takes its place, until it is kept.
+   */
+  preview?: true;
 }
 
 /** True for the app's own tabs (Settings, lint reports), which show no document. */
@@ -74,11 +79,43 @@ export function openTab(state: TabState, doc: OpenDocument): TabState {
   const existing = state.tabs.findIndex((t) => samePath(t.path, doc.path));
   if (existing >= 0) {
     const tabs = state.tabs.slice();
-    tabs[existing] = doc; // refresh content
+    // Refresh the content; a preview tab stays one.
+    tabs[existing] = state.tabs[existing]?.preview && doc.preview === undefined ? { ...doc, preview: true } : doc;
     return { tabs, activeIndex: existing };
   }
   const tabs = [...state.tabs, doc];
   return { tabs, activeIndex: tabs.length - 1 };
+}
+
+/**
+ * Opens `doc` as the preview tab: in place of the current preview tab, or as
+ * a new one. A document that is already open is only activated (and stays as
+ * it is: kept or preview).
+ */
+export function openPreviewTab(state: TabState, doc: OpenDocument): TabState {
+  const existing = state.tabs.findIndex((t) => samePath(t.path, doc.path));
+  if (existing >= 0) return { ...state, activeIndex: existing };
+  const preview = state.tabs.findIndex((t) => t.preview === true);
+  const tab: OpenDocument = { ...doc, preview: true };
+  if (preview < 0) return openTab(state, tab);
+  const tabs = state.tabs.slice();
+  tabs[preview] = tab;
+  return { tabs, activeIndex: preview };
+}
+
+/** The preview tab that {@link openPreviewTab} would replace, if any. */
+export function previewTab(state: TabState): OpenDocument | undefined {
+  return state.tabs.find((t) => t.preview === true);
+}
+
+/** Keeps a preview tab open (double-click, or editing it): it is no longer replaced. */
+export function keepTab(state: TabState, path: string): TabState {
+  const index = state.tabs.findIndex((t) => samePath(t.path, path) && t.preview === true);
+  if (index < 0) return state;
+  const tabs = state.tabs.slice();
+  const { preview: _, ...kept } = tabs[index]!;
+  tabs[index] = kept;
+  return { ...state, tabs };
 }
 
 /** Replaces the content of an open document (e.g. after it changed on disk) without switching tabs. */
@@ -86,7 +123,7 @@ export function updateTab(state: TabState, doc: OpenDocument): TabState {
   const index = state.tabs.findIndex((t) => samePath(t.path, doc.path));
   if (index < 0) return state;
   const tabs = state.tabs.slice();
-  tabs[index] = doc;
+  tabs[index] = state.tabs[index]?.preview && doc.preview === undefined ? { ...doc, preview: true } : doc;
   return { ...state, tabs };
 }
 

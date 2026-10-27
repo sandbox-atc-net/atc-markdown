@@ -47,6 +47,16 @@ describe("parseSession", () => {
     expect(parseSession(JSON.stringify(session))).toEqual(session);
   });
 
+  it("keeps the open folder, and drops only a broken one", () => {
+    const folder = { root: "C:/repo", expanded: ["docs", "docs/guides"] };
+    const state = openTab(emptyTabs, doc("C:/repo/README.md"));
+    const saved = toSession(state, folder);
+    expect(saved.folder).toEqual(folder);
+    expect(parseSession(JSON.stringify(saved))).toEqual(saved);
+    expect(parseSession('{"tabs":[],"active":null,"folder":{"root":5}}')).toEqual({ tabs: [], active: null });
+    expect(toSession(state)).not.toHaveProperty("folder");
+  });
+
   it("reads the first format", () => {
     expect(parseSession('{"paths":["a.md","b.md"],"active":"b.md"}')).toEqual({
       tabs: [

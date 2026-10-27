@@ -11,25 +11,29 @@
     <nav id="tabs" class="tabs" role="tablist" aria-label="Open documents"></nav>
     <div id="doc-bar" class="doc-bar" role="toolbar" aria-label="Document" hidden></div>
     <div id="viewport" class="viewport">
-      <aside id="wiki-sidebar" class="wiki-sidebar" aria-label="Wiki sidebar" hidden>
-        <div id="wiki-sidebar-body" class="markdown-body wiki-sidebar-body"></div>
-        <details id="wiki-pages" class="wiki-pages">
-          <summary id="wiki-pages-summary">Pages</summary>
-          <input
-            id="wiki-pages-filter"
-            class="wiki-pages-filter"
-            type="text"
-            placeholder="Find a page or text…"
-            aria-label="Find a page"
-            spellcheck="false"
-            autocomplete="off"
-          />
-          <ul id="wiki-pages-list" class="wiki-pages-list"></ul>
-          <p id="wiki-search-title" class="wiki-search-title" hidden></p>
-          <ul id="wiki-search-results" class="wiki-search-results"></ul>
-        </details>
+      <!-- The side panel: the wiki sidebar in a wiki tab, the Explorer of the open folder otherwise. -->
+      <aside id="side-panel" class="side-panel" hidden>
+        <div id="wiki-sidebar" class="wiki-sidebar" role="navigation" aria-label="Wiki sidebar" hidden>
+          <div id="wiki-sidebar-body" class="markdown-body wiki-sidebar-body"></div>
+          <details id="wiki-pages" class="wiki-pages">
+            <summary id="wiki-pages-summary">Pages</summary>
+            <input
+              id="wiki-pages-filter"
+              class="wiki-pages-filter"
+              type="text"
+              placeholder="Find a page or text…"
+              aria-label="Find a page"
+              spellcheck="false"
+              autocomplete="off"
+            />
+            <ul id="wiki-pages-list" class="wiki-pages-list"></ul>
+            <p id="wiki-search-title" class="wiki-search-title" hidden></p>
+            <ul id="wiki-search-results" class="wiki-search-results"></ul>
+          </details>
+        </div>
+        <div id="explorer" class="explorer" role="navigation" aria-label="Explorer" hidden></div>
       </aside>
-      <div id="wiki-splitter" class="wiki-splitter" role="separator" aria-orientation="vertical" aria-label="Resize sidebar" hidden></div>
+      <div id="side-splitter" class="side-splitter" role="separator" aria-orientation="vertical" aria-label="Resize side panel" hidden></div>
       <div id="editor-pane" class="editor-pane" hidden></div>
       <div id="editor-splitter" class="editor-splitter" role="separator" aria-orientation="vertical" aria-label="Resize editor" hidden></div>
       <main id="content" class="content">
@@ -37,10 +41,10 @@
         <header id="wiki-header" class="wiki-header" hidden></header>
         <div id="empty" class="empty">
           <p class="empty-title">Drop Markdown files here</p>
-          <p class="empty-hint">or open a <code>.md</code> file with Atc.Markdown</p>
+          <p class="empty-hint">or open a <code>.md</code> file or a folder with Atc.Markdown</p>
           <div class="empty-actions">
             <button id="open-button" class="open-button" type="button">Open file…</button>
-            <button id="open-wiki-button" class="open-button" type="button">Open wiki folder…</button>
+            <button id="open-folder-button" class="open-button" type="button">Open folder…</button>
           </div>
           <p class="empty-shortcut">Ctrl+O · Ctrl+Shift+O</p>
           <section id="recent" class="recent" hidden>

@@ -1,9 +1,9 @@
-// Recently opened files and wikis (shown on the start page), and recently
+// Recently opened files, wikis and folders (shown on the start page), and recently
 // closed tabs (Ctrl+Shift+T). Pure list handling; storage is done by the caller.
 
 export interface RecentEntry {
-  kind: "document" | "wiki";
-  /** File path, or the wiki folder. */
+  kind: "document" | "wiki" | "folder";
+  /** File path, or the wiki or open folder. */
   path: string;
   title: string;
 }
@@ -28,7 +28,7 @@ export function parseRecent(raw: string | null): RecentEntry[] {
         (item): item is RecentEntry =>
           typeof item === "object" &&
           item !== null &&
-          (item.kind === "document" || item.kind === "wiki") &&
+          (item.kind === "document" || item.kind === "wiki" || item.kind === "folder") &&
           typeof item.path === "string" &&
           typeof item.title === "string",
       )

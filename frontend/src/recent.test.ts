@@ -18,8 +18,9 @@ describe("recent", () => {
   it("parses stored lists and drops bad entries", () => {
     expect(parseRecent(null)).toEqual([]);
     expect(parseRecent("nope")).toEqual([]);
-    expect(parseRecent('[{"kind":"wiki","path":"w","title":"W"},{"kind":"x"},5]')).toEqual([
+    expect(parseRecent('[{"kind":"wiki","path":"w","title":"W"},{"kind":"folder","path":"f","title":"F"},{"kind":"x"},5]')).toEqual([
       { kind: "wiki", path: "w", title: "W" },
+      { kind: "folder", path: "f", title: "F" },
     ]);
   });
 });

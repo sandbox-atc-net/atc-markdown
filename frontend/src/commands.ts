@@ -5,7 +5,9 @@
 export const COMMANDS = [
   "new-file",
   "open",
-  "open-wiki",
+  "open-folder",
+  "close-folder",
+  "find-in-folder",
   "save",
   "save-as",
   "close-tab",
@@ -57,7 +59,8 @@ export interface KeyPress {
 const IN_EDITOR: ReadonlySet<Command> = new Set<Command>([
   "new-file",
   "open",
-  "open-wiki",
+  "open-folder",
+  "find-in-folder",
   "save",
   "save-as",
   "close-tab",
@@ -101,7 +104,7 @@ function commandForKeyAnywhere(e: KeyPress): Command | undefined {
     case "n":
       return e.shiftKey ? "editor-line-numbers" : "new-file";
     case "o":
-      return e.shiftKey ? "open-wiki" : "open";
+      return e.shiftKey ? "open-folder" : "open";
     case "s":
       return e.shiftKey ? "save-as" : "save";
     case "e":
@@ -126,7 +129,7 @@ function commandForKeyAnywhere(e: KeyPress): Command | undefined {
     case "l":
       return e.shiftKey ? "toggle-outline" : undefined;
     case "f":
-      return "find";
+      return e.shiftKey ? "find-in-folder" : "find";
     case "g":
       return e.shiftKey ? "find-previous" : "find-next";
     case "+":

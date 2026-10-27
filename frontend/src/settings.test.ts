@@ -1,17 +1,24 @@
 import { describe, expect, it } from "vitest";
-import { applied, needsRerender, stepTextSize, type Settings } from "./settings";
+import { applied, needsRerender, needsRescan, stepTextSize, type Settings } from "./settings";
 
 export const defaults: Settings = {
-  version: 1,
+  version: 2,
   appearance: { theme: "system", codeTheme: "github", textSize: 100, readingWidth: "medium", readingFont: "", codeFont: "", showOutline: false },
+  layout: { sidePanelPosition: "left", sidePanelWidth: 280 },
   wiki: {
-    sidebarPosition: "left",
     sidebarVisible: true,
-    sidebarWidth: 280,
     pageList: "collapsed",
     pageHeader: true,
     showFooter: true,
     offerOpenAsWiki: true,
+  },
+  folder: {
+    explorerVisible: true,
+    previewTabs: true,
+    revealActiveFile: true,
+    compactFolders: true,
+    respectGitignore: true,
+    skipFolders: ["node_modules", "bin", "obj", "target"],
   },
   files: { restoreSession: true, openFromOs: "newTab", autoReload: true },
   links: { statusBubble: true, confirmExternal: false, externalMarker: true },
@@ -34,7 +41,8 @@ describe("applied", () => {
       {
         ...defaults,
         appearance: { ...defaults.appearance, textSize: 125, readingWidth: "full", readingFont: "Georgia" },
-        wiki: { ...defaults.wiki, sidebarPosition: "right", pageList: "hidden" },
+        layout: { sidePanelPosition: "right", sidePanelWidth: 300 },
+        wiki: { ...defaults.wiki, pageList: "hidden" },
         code: { copyButton: "off", wrapLines: true, lineNumbers: true },
       },
       false,
@@ -44,6 +52,7 @@ describe("applied", () => {
     expect(a.vars["--font-sans"]).toBe("Georgia, var(--font-sans-default)");
     expect(a.vars["--font-mono"]).toBeUndefined();
     expect(a.classes["sidebar-right"]).toBe(true);
+    expect(a.vars["--sidebar-width"]).toBe("300px");
     expect(a.classes["page-list-hidden"]).toBe(true);
     expect(a.classes["copy-button-off"]).toBe(true);
     expect(a.classes["wrap-code"]).toBe(true);
@@ -59,6 +68,17 @@ describe("stepTextSize", () => {
     expect(stepTextSize(105, 1)).toBe(110);
     expect(stepTextSize(250, 1)).toBe(250);
     expect(stepTextSize(60, -1)).toBe(60);
+  });
+});
+
+describe("needsRescan", () => {
+  it("is true only for settings that change which files the Explorer shows", () => {
+    const preview = { ...defaults, folder: { ...defaults.folder, previewTabs: false } };
+    expect(needsRescan(defaults, preview)).toBe(false);
+    const skip = { ...defaults, folder: { ...defaults.folder, skipFolders: ["dist"] } };
+    expect(needsRescan(defaults, skip)).toBe(true);
+    const ignore = { ...defaults, folder: { ...defaults.folder, respectGitignore: false } };
+    expect(needsRescan(defaults, ignore)).toBe(true);
   });
 });
 

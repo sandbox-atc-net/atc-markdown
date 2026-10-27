@@ -4,14 +4,23 @@ import { activateTab, emptyTabs, isAppView, openTab, type OpenDocument, type Tab
 
 export type SessionTab = { kind: "document"; path: string } | { kind: "wiki"; root: string; page: string };
 
+/** The folder open in the Explorer, with the folders that were expanded. */
+export interface SessionFolder {
+  root: string;
+  /** `relative` paths of the expanded folders. */
+  expanded: string[];
+}
+
 export interface Session {
   tabs: SessionTab[];
   /** Identity (`path`) of the active tab. */
   active: string | null;
+  folder?: SessionFolder;
 }
 
-export function toSession(state: TabState): Session {
+export function toSession(state: TabState, folder?: SessionFolder): Session {
   return {
+    ...(folder ? { folder } : {}),
     tabs: state.tabs
       .filter((tab) => !isAppView(tab) && !tab.edit?.untitled)
       .map((tab) =>
@@ -36,16 +45,28 @@ export function parseSession(raw: string | null): Session | undefined {
     return undefined;
   }
   if (typeof value !== "object" || value === null) return undefined;
-  const { tabs, paths, active } = value as Record<string, unknown>;
+  const { tabs, paths, active, folder } = value as Record<string, unknown>;
   if (active !== null && typeof active !== "string") return undefined;
 
   if (Array.isArray(tabs)) {
-    return tabs.every(isSessionTab) ? { tabs, active } : undefined;
+    if (!tabs.every(isSessionTab)) return undefined;
+    // A broken folder entry only loses the folder, not the tabs.
+    return isSessionFolder(folder) ? { tabs, active, folder } : { tabs, active };
   }
   if (Array.isArray(paths) && paths.every((p) => typeof p === "string")) {
     return { tabs: (paths as string[]).map((path) => ({ kind: "document", path })), active };
   }
   return undefined;
+}
+
+function isSessionFolder(value: unknown): value is SessionFolder {
+  if (typeof value !== "object" || value === null) return false;
+  const folder = value as Record<string, unknown>;
+  return (
+    typeof folder.root === "string" &&
+    Array.isArray(folder.expanded) &&
+    folder.expanded.every((e) => typeof e === "string")
+  );
 }
 
 function isSessionTab(value: unknown): value is SessionTab {

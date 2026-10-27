@@ -16,6 +16,8 @@ type Field =
   | (FieldBase & { kind: "select"; options: readonly (readonly [string, string])[]; numeric?: boolean })
   | (FieldBase & { kind: "toggle" })
   | (FieldBase & { kind: "text"; placeholder: string })
+  /** A list of names, edited as comma-separated text. */
+  | (FieldBase & { kind: "list"; placeholder: string })
   | (FieldBase & { kind: "rule"; defaultOn: boolean });
 
 export interface CodeThemeChoice {
@@ -121,19 +123,50 @@ function sections(
       ],
     },
     {
-      id: "wiki",
-      title: "Wiki",
+      id: "layout",
+      title: "Layout",
       fields: [
         {
           kind: "select",
-          section: "wiki",
-          key: "sidebarPosition",
-          label: "Sidebar position",
+          section: "layout",
+          key: "sidePanelPosition",
+          label: "Side panel position",
+          hint: "Where the Explorer and the wiki sidebar are. The outline goes on the other side.",
           options: [
             ["left", "Left"],
             ["right", "Right"],
           ],
         },
+      ],
+    },
+    {
+      id: "folder",
+      title: "Folder",
+      fields: [
+        onOff("Show the Explorer", "folder", "explorerVisible", "The files of the open folder. Ctrl+B shows or hides it."),
+        onOff(
+          "Preview tabs",
+          "folder",
+          "previewTabs",
+          "One click opens a file in a preview tab (title in italics) that the next click replaces. Double-click keeps it open.",
+        ),
+        onOff("Reveal the active file", "folder", "revealActiveFile", "Select the file of the active tab in the Explorer."),
+        onOff("Compact folders", "folder", "compactFolders", "A folder that only holds one folder is shown on one row: docs/guides."),
+        onOff("Respect .gitignore", "folder", "respectGitignore", "Leave out what .gitignore ignores. Also for folder search and Lint Folder."),
+        {
+          kind: "list",
+          section: "folder",
+          key: "skipFolders",
+          label: "Folders to skip",
+          hint: "Folder names, separated by commas. Hidden folders (.git, .vs) are always skipped.",
+          placeholder: "node_modules, bin, obj, target",
+        },
+      ],
+    },
+    {
+      id: "wiki",
+      title: "Wiki",
+      fields: [
         onOff("Show the sidebar", "wiki", "sidebarVisible", "Ctrl+B shows or hides it."),
         {
           kind: "select",
@@ -330,6 +363,25 @@ function control(settings: Settings, field: Field, actions: SettingsActions): HT
     input.spellcheck = false;
     input.value = String(value(settings, field) ?? "");
     input.addEventListener("change", () => change(input.value.trim()));
+    return input;
+  }
+  if (field.kind === "list") {
+    const input = document.createElement("input");
+    input.type = "text";
+    input.id = id;
+    input.className = "settings-text";
+    input.placeholder = field.placeholder;
+    input.spellcheck = false;
+    const list = value(settings, field);
+    input.value = Array.isArray(list) ? list.join(", ") : "";
+    input.addEventListener("change", () =>
+      change(
+        input.value
+          .split(",")
+          .map((name) => name.trim())
+          .filter(Boolean),
+      ),
+    );
     return input;
   }
   const select = document.createElement("select");
