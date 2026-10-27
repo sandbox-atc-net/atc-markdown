@@ -12,7 +12,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
 
-use atc_markdown_core::{FrontMatterStyle, LintConfig, RenderOptions};
+use atc_markdown_core::{FrontMatterStyle, LintConfig, RenderOptions, ScanOptions};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -20,7 +20,9 @@ use serde_json::Value;
 pub const SETTINGS_CHANGED_EVENT: &str = "settings-changed";
 
 const FILE_NAME: &str = "settings.json";
-const VERSION: u32 = 1;
+/// 2: `wiki.sidebarPosition` / `sidebarWidth` moved to `layout` (shared by the
+/// wiki sidebar and the Explorer).
+const VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -115,12 +117,29 @@ impl Default for Appearance {
     }
 }
 
+/// The side panel: the wiki sidebar in a wiki tab, the Explorer otherwise.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct LayoutSettings {
+    /// Which side the side panel is on; the outline goes on the other side.
+    pub side_panel_position: Side,
+    /// Width in pixels (the splitter changes it).
+    pub side_panel_width: u32,
+}
+
+impl Default for LayoutSettings {
+    fn default() -> Self {
+        Self {
+            side_panel_position: Side::Left,
+            side_panel_width: 280,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct WikiSettings {
-    pub sidebar_position: Side,
     pub sidebar_visible: bool,
-    pub sidebar_width: u32,
     pub page_list: PageList,
     pub page_header: bool,
     pub show_footer: bool,
@@ -130,13 +149,56 @@ pub struct WikiSettings {
 impl Default for WikiSettings {
     fn default() -> Self {
         Self {
-            sidebar_position: Side::Left,
             sidebar_visible: true,
-            sidebar_width: 280,
             page_list: PageList::Collapsed,
             page_header: true,
             show_footer: true,
             offer_open_as_wiki: true,
+        }
+    }
+}
+
+/// Folder mode: the Explorer panel of an open folder.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct FolderSettings {
+    /// The Explorer is shown (Ctrl+B outside a wiki tab).
+    pub explorer_visible: bool,
+    /// A single click opens a preview tab that the next click replaces.
+    pub preview_tabs: bool,
+    /// The active tab's file is selected and scrolled into view in the tree.
+    pub reveal_active_file: bool,
+    /// Folders with only one folder inside are shown on one row (`docs/guides`).
+    pub compact_folders: bool,
+    /// Leave out what `.gitignore` ignores.
+    pub respect_gitignore: bool,
+    /// Folder names left out of the tree, folder search and Lint Folder.
+    pub skip_folders: Vec<String>,
+}
+
+impl Default for FolderSettings {
+    fn default() -> Self {
+        Self {
+            explorer_visible: true,
+            preview_tabs: true,
+            reveal_active_file: true,
+            compact_folders: true,
+            respect_gitignore: true,
+            skip_folders: atc_markdown_core::DEFAULT_SKIPPED_DIRS
+                .iter()
+                .map(|&d| d.to_owned())
+                .collect(),
+        }
+    }
+}
+
+impl FolderSettings {
+    /// How folders are scanned (Explorer, folder search, Lint Folder).
+    pub fn scan_options(&self) -> ScanOptions {
+        ScanOptions {
+            skipped_dirs: self.skip_folders.clone(),
+            respect_gitignore: self.respect_gitignore,
+            ..ScanOptions::default()
         }
     }
 }
@@ -284,7 +346,9 @@ impl LintingSettings {
 pub struct Settings {
     pub version: u32,
     pub appearance: Appearance,
+    pub layout: LayoutSettings,
     pub wiki: WikiSettings,
+    pub folder: FolderSettings,
     pub files: FileSettings,
     pub links: LinkSettings,
     pub rendering: RenderingSettings,
@@ -298,7 +362,9 @@ impl Default for Settings {
         Self {
             version: VERSION,
             appearance: Appearance::default(),
+            layout: LayoutSettings::default(),
             wiki: WikiSettings::default(),
+            folder: FolderSettings::default(),
             files: FileSettings::default(),
             links: LinkSettings::default(),
             rendering: RenderingSettings::default(),
@@ -310,9 +376,10 @@ impl Default for Settings {
 }
 
 impl Settings {
-    /// Builds settings from JSON, keeping every valid key and skipping the rest.
+    /// Builds settings from JSON (a saved `settings.json`, possibly from an
+    /// older version), keeping every valid key and skipping the rest.
     pub fn from_value(user: &Value) -> Self {
-        Self::default().merge(user)
+        Self::default().merge(&migrate(user))
     }
 
     /// These settings with the valid keys of `user` applied on top.
@@ -344,7 +411,8 @@ impl Settings {
     fn normalized(mut self) -> Self {
         self.version = VERSION;
         self.appearance.text_size = self.appearance.text_size.clamp(50, 300);
-        self.wiki.sidebar_width = self.wiki.sidebar_width.clamp(160, 900);
+        self.layout.side_panel_width = self.layout.side_panel_width.clamp(160, 900);
+        self.folder.skip_folders = clean_folder_names(&self.folder.skip_folders);
         let code_theme = atc_markdown_core::code_theme(&self.appearance.code_theme).id;
         code_theme.clone_into(&mut self.appearance.code_theme);
         self.appearance.reading_font = clean_font(&self.appearance.reading_font);
@@ -370,6 +438,52 @@ impl Settings {
             source_positions: false,
         }
     }
+}
+
+/// Moves keys of older versions to where they live now.
+fn migrate(user: &Value) -> Value {
+    let mut user = user.clone();
+    let version = user.get("version").and_then(Value::as_u64).unwrap_or(1);
+    if version < 2
+        && let Some(sections) = user.as_object_mut()
+    {
+        // The sidebar position and width now place the Explorer too.
+        let moved: Vec<(&str, Value)> = [
+            ("sidebarPosition", "sidePanelPosition"),
+            ("sidebarWidth", "sidePanelWidth"),
+        ]
+        .into_iter()
+        .filter_map(|(old, new)| {
+            let value = sections.get_mut("wiki")?.as_object_mut()?.remove(old)?;
+            Some((new, value))
+        })
+        .collect();
+        if !moved.is_empty() {
+            let layout = sections
+                .entry("layout")
+                .or_insert_with(|| Value::Object(serde_json::Map::new()));
+            if let Some(layout) = layout.as_object_mut() {
+                for (key, value) in moved {
+                    layout.entry(key).or_insert(value);
+                }
+            }
+        }
+    }
+    user
+}
+
+/// Folder names to skip: trimmed, no paths, no duplicates, at most 50.
+fn clean_folder_names(names: &[String]) -> Vec<String> {
+    let mut clean: Vec<String> = Vec::new();
+    for name in names {
+        let name = name.trim();
+        let valid = !name.is_empty() && name.len() <= 100 && !name.contains(['/', '\\']);
+        if valid && !clean.iter().any(|c| c.eq_ignore_ascii_case(name)) {
+            clean.push(name.to_owned());
+        }
+    }
+    clean.truncate(50);
+    clean
 }
 
 /// A font name goes into CSS; keep only characters a font family list needs.
@@ -458,13 +572,14 @@ mod tests {
     fn keeps_valid_keys_and_skips_invalid_or_unknown_ones() {
         let settings = Settings::from_value(&json!({
             "appearance": { "theme": "dark", "textSize": "huge", "unknown": 1 },
-            "wiki": { "sidebarPosition": "right", "pageList": "sideways" },
+            "layout": { "sidePanelPosition": "right" },
+            "wiki": { "pageList": "sideways" },
             "nope": { "x": 1 },
             "code": "not an object"
         }));
         assert_eq!(settings.appearance.theme, Theme::Dark);
         assert_eq!(settings.appearance.text_size, 100);
-        assert_eq!(settings.wiki.sidebar_position, Side::Right);
+        assert_eq!(settings.layout.side_panel_position, Side::Right);
         assert_eq!(settings.wiki.page_list, PageList::Collapsed);
         assert_eq!(settings.code, CodeSettings::default());
     }
@@ -488,12 +603,47 @@ mod tests {
     fn clamps_and_cleans_values() {
         let settings = Settings::from_value(&json!({
             "appearance": { "textSize": 5000, "codeTheme": "nope", "readingFont": "Georgia; } body { x" },
-            "wiki": { "sidebarWidth": 10 }
+            "layout": { "sidePanelWidth": 10 },
+            "folder": { "skipFolders": [" node_modules ", "", "a/b", "NODE_MODULES", "dist"] }
         }));
         assert_eq!(settings.appearance.text_size, 300);
         assert_eq!(settings.appearance.code_theme, "github");
         assert_eq!(settings.appearance.reading_font, "Georgia  body  x");
-        assert_eq!(settings.wiki.sidebar_width, 160);
+        assert_eq!(settings.layout.side_panel_width, 160);
+        assert_eq!(settings.folder.skip_folders, ["node_modules", "dist"]);
+    }
+
+    #[test]
+    fn migrates_the_wiki_sidebar_position_and_width_to_the_layout() {
+        let old = json!({
+            "version": 1,
+            "wiki": { "sidebarPosition": "right", "sidebarWidth": 400, "showFooter": false }
+        });
+        let settings = Settings::from_value(&old);
+        assert_eq!(settings.layout.side_panel_position, Side::Right);
+        assert_eq!(settings.layout.side_panel_width, 400);
+        assert!(!settings.wiki.show_footer, "other wiki keys stay");
+        assert_eq!(settings.version, 2);
+        // Version 2 files are taken as they are.
+        let new = json!({ "version": 2, "wiki": { "sidebarPosition": "right" } });
+        assert_eq!(
+            Settings::from_value(&new).layout.side_panel_position,
+            Side::Left
+        );
+    }
+
+    #[test]
+    fn folder_settings_give_the_scan_options() {
+        let settings = Settings::from_value(&json!({
+            "folder": { "respectGitignore": false, "skipFolders": ["dist"] }
+        }));
+        let scan = settings.folder.scan_options();
+        assert!(!scan.respect_gitignore);
+        assert_eq!(scan.skipped_dirs, ["dist"]);
+        assert_eq!(
+            Settings::default().folder.scan_options().skipped_dirs,
+            ["node_modules", "bin", "obj", "target"]
+        );
     }
 
     #[test]

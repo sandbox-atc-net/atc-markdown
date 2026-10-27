@@ -17,7 +17,7 @@ use tauri_plugin_opener::OpenerExt;
 
 use crate::file_open::PendingPaths;
 use crate::settings::{SETTINGS_CHANGED_EVENT, Settings, SettingsStore};
-use crate::watcher::DocumentWatcher;
+use crate::watcher::{DocumentWatcher, TreeKind};
 use crate::wikis::WikiRegistry;
 
 /// The current settings.
@@ -255,12 +255,13 @@ pub async fn lint_folder(
     if !root.is_dir() {
         return Err(format!("Not a folder: {}", root.display()));
     }
-    let linting = settings.get().linting;
+    let current = settings.get();
+    let (linting, scan) = (current.linting, current.folder.scan_options());
     tauri::async_runtime::spawn_blocking(move || {
         // Files in one folder share their configuration file.
         let mut by_dir: HashMap<PathBuf, (atc_markdown_core::LintConfig, Option<String>)> =
             HashMap::new();
-        atc_markdown_core::lint_folder(&root, |file| {
+        atc_markdown_core::lint_folder(&root, &scan, |file| {
             let dir = file.parent().map(Path::to_path_buf).unwrap_or_default();
             by_dir
                 .entry(dir)
@@ -309,9 +310,14 @@ pub fn close_all_documents(watcher: State<'_, DocumentWatcher>) {
 #[derive(Debug, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum PathKind {
-    /// A wiki folder.
+    /// A GitHub wiki folder: opens in wiki mode.
     Wiki {
         /// The wiki folder.
+        root: PathBuf,
+    },
+    /// Any other folder: opens in the Explorer.
+    Folder {
+        /// The folder.
         root: PathBuf,
     },
     /// A Markdown file; `wiki_root` is set when the file is a page of a wiki.
@@ -322,14 +328,18 @@ pub enum PathKind {
     },
 }
 
-/// Tells the frontend whether a path is a wiki folder or a document. Any folder
-/// opened on purpose is shown as a wiki; a file inside a wiki folder is a document
-/// that can also be opened as part of its wiki.
+/// Tells the frontend how to open a path: a GitHub wiki folder in wiki mode,
+/// any other folder in the Explorer, and a file as a document (a file inside a
+/// wiki folder can also be opened as part of its wiki).
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)]
 pub fn path_kind(path: PathBuf) -> PathKind {
     if path.is_dir() {
-        PathKind::Wiki { root: path }
+        if atc_markdown_core::is_wiki_dir(&path) {
+            PathKind::Wiki { root: path }
+        } else {
+            PathKind::Folder { root: path }
+        }
     } else {
         PathKind::Document {
             wiki_root: atc_markdown_core::find_wiki_root(&path),
@@ -343,14 +353,81 @@ pub fn path_kind(path: PathBuf) -> PathKind {
 pub async fn open_wiki(
     watcher: State<'_, DocumentWatcher>,
     wikis: State<'_, WikiRegistry>,
+    settings: State<'_, SettingsStore>,
     root: PathBuf,
 ) -> Result<WikiInfo, String> {
     let wiki = wikis.open(&root).map_err(|error| {
         tracing::warn!(%error, "failed to open wiki");
         format!("Not a wiki folder: {error}")
     })?;
-    watcher.watch_wiki(wiki.root());
+    watcher.watch_tree(
+        wiki.root(),
+        TreeKind::Wiki,
+        &settings.get().folder.skip_folders,
+    );
     Ok(wiki.info())
+}
+
+/// Scans a folder for the Explorer and starts watching it for added, renamed
+/// and removed Markdown files and folders.
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+pub async fn open_folder(
+    watcher: State<'_, DocumentWatcher>,
+    settings: State<'_, SettingsStore>,
+    root: PathBuf,
+) -> Result<atc_markdown_core::FolderTree, String> {
+    let folder = settings.get().folder;
+    let tree = scan_folder(root, folder.scan_options()).await?;
+    watcher.watch_tree(&tree.root, TreeKind::Folder, &folder.skip_folders);
+    Ok(tree)
+}
+
+/// Scans an open folder again (after it changed on disk or a setting changed).
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+pub async fn folder_tree(
+    settings: State<'_, SettingsStore>,
+    root: PathBuf,
+) -> Result<atc_markdown_core::FolderTree, String> {
+    scan_folder(root, settings.get().folder.scan_options()).await
+}
+
+async fn scan_folder(
+    root: PathBuf,
+    scan: atc_markdown_core::ScanOptions,
+) -> Result<atc_markdown_core::FolderTree, String> {
+    tauri::async_runtime::spawn_blocking(move || atc_markdown_core::folder_tree(&root, &scan))
+        .await
+        .map_err(|error| error.to_string())?
+        .map_err(|error| {
+            tracing::warn!(%error, "failed to open folder");
+            error.to_string()
+        })
+}
+
+/// Called when the open folder is closed (or replaced by another one).
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+pub fn close_folder(watcher: State<'_, DocumentWatcher>, root: PathBuf) {
+    watcher.unwatch_tree(&root, TreeKind::Folder);
+}
+
+/// Full-text search across the Markdown files of the open folder.
+#[tauri::command]
+#[allow(clippy::needless_pass_by_value)]
+pub async fn search_folder(
+    settings: State<'_, SettingsStore>,
+    root: PathBuf,
+    query: String,
+) -> Result<Vec<atc_markdown_core::SearchHit>, String> {
+    let scan = settings.get().folder.scan_options();
+    tauri::async_runtime::spawn_blocking(move || {
+        atc_markdown_core::search_folder(&root, &scan, &query, 50)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+    .map_err(|error| error.to_string())
 }
 
 /// Renders a page (or `_Sidebar.md` / `_Footer.md`) of an open wiki and watches it.
@@ -417,7 +494,7 @@ pub fn close_wiki(watcher: State<'_, DocumentWatcher>, root: PathBuf, files: Vec
     for file in &files {
         watcher.unwatch(file);
     }
-    watcher.unwatch_wiki(&root);
+    watcher.unwatch_tree(&root, TreeKind::Wiki);
 }
 
 /// Handles a clicked link. Web links open in the system browser and other local

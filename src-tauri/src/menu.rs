@@ -14,7 +14,9 @@ pub const MENU_COMMAND_EVENT: &str = "menu-command";
 /// Ids of the custom menu items. Must match `Command` in `frontend/src/main.ts`.
 pub const COMMAND_IDS: &[&str] = &[
     "open",
-    "open-wiki",
+    "open-folder",
+    "close-folder",
+    "find-in-folder",
     "close-tab",
     "go-back",
     "go-forward",
@@ -73,7 +75,8 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     let mut file = SubmenuBuilder::new(app, "&File")
         .item(&item("new-file", "&New", &m("N"))?)
         .item(&item("open", "&Open…", &m("O"))?)
-        .item(&item("open-wiki", "Open &Wiki Folder…", &m("Shift+O"))?)
+        .item(&item("open-folder", "Open &Folder…", &m("Shift+O"))?)
+        .item(&item("close-folder", "Close F&older", "")?)
         .separator()
         .item(&item("save", "&Save", &m("S"))?)
         .item(&item("save-as", "Save &As…", &m("Shift+S"))?)
@@ -95,7 +98,8 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     let mut edit = edit
         .item(&item("find", "&Find…", &m("F"))?)
         .item(&item("find-next", "Find &Next", "F3")?)
-        .item(&item("find-previous", "Find &Previous", "Shift+F3")?);
+        .item(&item("find-previous", "Find &Previous", "Shift+F3")?)
+        .item(&item("find-in-folder", "Find in F&older…", &m("Shift+F"))?);
     if !cfg!(target_os = "macos") {
         // macOS has Settings in the application menu instead.
         edit = edit
@@ -182,7 +186,7 @@ fn view_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Submenu<R>> {
         .item(&menu_item(
             app,
             "toggle-sidebar",
-            "Toggle Wiki &Sidebar",
+            "Explorer / Wiki &Sidebar",
             &ctrl("B"),
         )?)
         .item(&menu_item(
